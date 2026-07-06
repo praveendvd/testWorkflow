@@ -27,7 +27,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
 ## Cursor
 
 1. Open this repository as the workspace root in Cursor.
-2. Edit `/home/runner/work/firstmcpexample/firstmcpexample/.cursor/mcp.json` env values (or use Cursor secrets).
+2. Edit `.cursor/mcp.json` env values (or use Cursor secrets).
 3. In Cursor, go to **Settings → MCP → Reload**.
 
 ## Inventory

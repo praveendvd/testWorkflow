@@ -14,6 +14,6 @@ export async function jiraFetch(path: string, init?: RequestInit): Promise<unkno
       ...init?.headers,
     },
   });
-  if (!res.ok) throw new Error(`Jira error ${res.status}`);
+  if (!res.ok) throw new Error(`Jira error ${res.status} ${res.statusText}`);
   return res.json();
 }
