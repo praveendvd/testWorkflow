@@ -13,8 +13,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  e2e-required-until-runtests:
-    name: e2e-required-until-runtests
+  e2e-required-until-slash-command:
+    name: e2e-required-until-slash-command
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -101,7 +101,7 @@ jobs:
             const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
             const shortSha = process.env.HEAD_SHA.slice(0, 7);
             const body = [
-              'PR checks were requested via slash command (/runchecks / /runtests).',
+              'PR checks were requested via slash command (/runtests / /runchecks).',
               '',
               `Branch: ${process.env.HEAD_BRANCH}`,
               `Commit: ${shortSha}`,
