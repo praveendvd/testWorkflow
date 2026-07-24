@@ -2,7 +2,7 @@ name: mock-e2e-on-demand
 
 on:
   issue_comment:
-    types: [created]
+    types: []
 
 permissions:
   checks: write
