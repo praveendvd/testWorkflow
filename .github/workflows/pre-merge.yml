@@ -184,6 +184,5 @@ jobs:
               });
             }
 
-            if (conclusion === 'failure') {
-              core.setFailed(summary);
-            }
+            // Do not fail this reporter job itself; the required check-run
+            // "E2E (Internal & Prod)" already carries the gating conclusion.
