@@ -19,7 +19,6 @@ jobs:
     uses: ./.github/workflows/mock-snyk-scan.yml
 
   comment-context:
-    if: github.event_name == 'issue_comment'
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.eval.outputs.should_run }}
@@ -29,27 +28,35 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Evaluate comment authorization and command
+      - name: Evaluate E2E run context
         id: eval
         uses: actions/github-script@v7
         with:
           script: |
             const enable = `${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}` === 'true';
-            const issue = context.payload.issue;
-            const commentBody = (context.payload.comment?.body || '').trim();
-            const association = context.payload.comment?.author_association || '';
-            const allowedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const eventName = context.eventName;
 
             let shouldRun = false;
             let pullNumber = '';
             let headSha = '';
 
-            if (enable && issue?.pull_request && commentBody === '/runtests' && allowedAssociations.has(association)) {
-              pullNumber = String(issue.number);
-              const { owner, repo } = context.repo;
-              const pr = await github.rest.pulls.get({ owner, repo, pull_number: issue.number });
-              headSha = pr.data.head.sha;
-              shouldRun = true;
+            if (eventName === 'pull_request') {
+              shouldRun = !enable;
+              pullNumber = String(context.payload.pull_request.number);
+              headSha = context.payload.pull_request.head.sha;
+            } else if (eventName === 'issue_comment') {
+              const issue = context.payload.issue;
+              const commentBody = (context.payload.comment?.body || '').trim();
+              const association = context.payload.comment?.author_association || '';
+              const allowedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+              if (enable && issue?.pull_request && commentBody === '/runtests' && allowedAssociations.has(association)) {
+                pullNumber = String(issue.number);
+                const { owner, repo } = context.repo;
+                const pr = await github.rest.pulls.get({ owner, repo, pull_number: issue.number });
+                headSha = pr.data.head.sha;
+                shouldRun = true;
+              }
             }
 
             core.setOutput('should_run', shouldRun ? 'true' : 'false');
@@ -57,11 +64,7 @@ jobs:
             core.setOutput('head_sha', headSha);
 
   e2e-internal:
-    if: >
-      always() && (
-        (github.event_name == 'pull_request' && vars.ENABLE_E2E_COMMENT_VALIDATION != 'true') ||
-        (github.event_name == 'issue_comment' && needs.comment-context.outputs.should_run == 'true')
-      )
+    if: always() && needs.comment-context.outputs.should_run == 'true'
     name: E2E Tests (Internal)
     needs: [validation, comment-context]
     runs-on: ubuntu-latest
@@ -70,11 +73,7 @@ jobs:
         run: echo "Mock internal E2E run completed"
 
   e2e-prod:
-    if: >
-      always() && (
-        (github.event_name == 'pull_request' && vars.ENABLE_E2E_COMMENT_VALIDATION != 'true') ||
-        (github.event_name == 'issue_comment' && needs.comment-context.outputs.should_run == 'true')
-      )
+    if: always() && needs.comment-context.outputs.should_run == 'true'
     name: E2E Tests (Prod)
     needs: [validation, comment-context]
     runs-on: ubuntu-latest
@@ -89,7 +88,7 @@ jobs:
     if: >
       always() && (
         github.event_name == 'pull_request' ||
-        (github.event_name == 'issue_comment' && needs.comment-context.outputs.should_run == 'true')
+        needs.comment-context.outputs.should_run == 'true'
       )
     permissions:
       checks: write
