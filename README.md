@@ -70,7 +70,7 @@ Documentation-only future improvements (not implemented here):
 This repository includes two mocked CI checks:
 
 - `mock-snyk-scan` workflow (`snyk-scan` job) runs on every PR commit.
-- `mock-e2e-on-demand` workflow creates an `e2e-on-demand` check only when a repo collaborator/member/owner comments `/runtests` on a PR.
+- `mock-e2e-on-demand` workflow marks `e2e-on-demand` as failed on each PR commit until a repo collaborator/member/owner comments `/runtests` (or `/runchecks`), then updates it with on-demand E2E results.
 
 To enforce merge gating, set branch protection required status checks to:
 
@@ -80,4 +80,4 @@ To enforce merge gating, set branch protection required status checks to:
 With these required checks enabled, PR merge stays blocked until:
 
 1. Snyk mock check succeeds on the latest commit.
-2. `/runtests` is commented for that latest commit and the on-demand E2E check completes successfully.
+2. `/runtests` (or `/runchecks`) is commented for that latest commit and the on-demand E2E check completes successfully.
