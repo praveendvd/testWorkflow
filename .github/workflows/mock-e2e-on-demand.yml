@@ -119,9 +119,11 @@ jobs:
             });
 
       - name: Mock E2E Internal
+        id: mock_e2e_internal
         run: echo "e2e internal passed"
 
       - name: Mock E2E Prod
+        id: mock_e2e_prod
         run: echo "e2e prod passed"
 
       - name: Mark E2E check as completed
@@ -131,10 +133,10 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const conclusion = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            const internalOutcome = '${{ steps.mock_e2e_internal.outcome }}';
+            const prodOutcome = '${{ steps.mock_e2e_prod.outcome }}';
             const title = conclusion === 'success' ? 'Mock E2E completed' : 'Mock E2E failed';
-            const summary = conclusion === 'success'
-              ? 'e2e ran, e2e progress, e2e completed'
-              : 'The mock E2E workflow failed before completion.';
+            const summary = `E2E Internal: ${internalOutcome}, E2E Prod: ${prodOutcome}`;
             await github.rest.checks.update({
               owner,
               repo,
@@ -161,12 +163,12 @@ jobs:
             const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
             const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
             const conclusion = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            const internalOutcome = '${{ steps.mock_e2e_internal.outcome }}';
+            const prodOutcome = '${{ steps.mock_e2e_prod.outcome }}';
             const headline = conclusion === 'success'
               ? 'Slash-command E2E passed for this commit.'
               : 'Slash-command E2E failed for this commit.';
-            const validation = conclusion === 'success'
-              ? 'success · E2E Internal: success · E2E Prod: success'
-              : 'failure · E2E Internal: failure · E2E Prod: not_run';
+            const validation = `${conclusion} · E2E Internal: ${internalOutcome} · E2E Prod: ${prodOutcome}`;
             const shortSha = process.env.HEAD_SHA.slice(0, 7);
             const body = [
               headline,
