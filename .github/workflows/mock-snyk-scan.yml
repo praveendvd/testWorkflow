@@ -1,8 +1,6 @@
 name: mock-snyk-scan
 
 on:
-  pull_request:
-    types: []
   workflow_dispatch:
 
 permissions:
