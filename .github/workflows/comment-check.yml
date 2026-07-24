@@ -3,6 +3,7 @@ on:
   workflow_call:
     outputs:
       should_run:
+        description: "Whether the slash command condition is met (true/false)"
         value: ${{ jobs.check.outputs.should_run }}
 
 jobs:
@@ -13,14 +14,38 @@ jobs:
     steps:
       - id: condition
         run: |
+          # 1. If this workflow is triggered by a pull_request event, there is no comment.
+          #    In that case, we should NOT run E2E jobs.
+          if [ "${{ github.event_name }}" != "issue_comment" ]; then
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 2. Now we are on an issue_comment event, so comment data exists.
           COMMENT="${{ github.event.comment.body }}"
           ASSOC="${{ github.event.comment.author_association }}"
           IS_PR="${{ github.event.issue.pull_request != '' }}"
-          
-          if [ "${{ var.ENABLE_E2E_COMMENT_VALIDATION }}" = "false" ] || \
-             ( [ "$IS_PR" = "true" ] && \
-             { [ "$ASSOC" = "OWNER" ] || [ "$ASSOC" = "MEMBER" ] || [ "$ASSOC" = "COLLABORATOR" ]; } && \
-             { [ "$COMMENT" = "/runtests" ] || [ "$COMMENT" = "/runchecks" ]; } ); then
+
+          # 3. Check if the comment is on a pull request
+          if [ "$IS_PR" != "true" ]; then
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 4. Check if E2E comment validation is enabled via repository variable
+          ENABLE_VALIDATION="${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}"
+          # If variable is not set or is "false", we always allow run (should_run=true)
+          # Otherwise, we enforce the slash command and author checks.
+          if [ "$ENABLE_VALIDATION" = "false" ] || [ -z "$ENABLE_VALIDATION" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 5. Validation is enabled: check exact slash command and author association
+          # Allowed authors: OWNER, MEMBER, COLLABORATOR
+          # Allowed commands: /runtests or /runchecks (exact match)
+          if { [ "$ASSOC" = "OWNER" ] || [ "$ASSOC" = "MEMBER" ] || [ "$ASSOC" = "COLLABORATOR" ]; } && \
+             { [ "$COMMENT" = "/runtests" ] || [ "$COMMENT" = "/runchecks" ]; }; then
             echo "should_run=true" >> $GITHUB_OUTPUT
           else
             echo "should_run=false" >> $GITHUB_OUTPUT
