@@ -2,6 +2,7 @@ name: Pull Request Validation
 
 # RULESET: Require the single check "E2E (Internal & Prod)" in branch protection.
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, edited]
     branches:
@@ -34,7 +35,6 @@ jobs:
 
   e2e-gate:
     name: E2E (Internal & Prod)
-    runs-on: group: RXP-wdci-small
     needs: [validation, e2e-internal, e2e-prod]
     if: always()
     steps:
