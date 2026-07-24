@@ -1,4 +1,4 @@
-// Evaluates whether E2E tests should run and manages the "E2E (Internal & Prod)"
+// Evaluates whether E2E tests should run and manages the "E2E (Internal & Prod)".
 // check-run state so users see real-time feedback.
 //
 // When ENABLE_E2E_COMMENT_VALIDATION=true:
