@@ -37,7 +37,7 @@ jobs:
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
         with:
           script: |
-            await require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/comment-context.js`)({github, context, core});
+            await require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/comment-context.cjs`)({github, context, core});
 
   e2e-internal:
     if: always() && needs.comment-context.outputs.should_run == 'true'
@@ -79,4 +79,4 @@ jobs:
           PULL_NUMBER: ${{ needs['comment-context'].outputs.pull_number }}
         with:
           script: |
-            await require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/e2e-gate.js`)({github, context, core});
+            await require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/e2e-gate.cjs`)({github, context, core});
