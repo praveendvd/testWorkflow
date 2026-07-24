@@ -19,7 +19,7 @@ module.exports = async ({ core, github, context }) => {
     if (
       enable &&
       issue?.pull_request &&
-      commentBody === '/runtests' &&
+      (commentBody === '\\runtests' || commentBody === '/runtests') &&
       allowedAssociations.has(association)
     ) {
       pullNumber = String(issue.number);
@@ -31,6 +31,47 @@ module.exports = async ({ core, github, context }) => {
       });
       headSha = pr.data.head.sha;
       shouldRun = true;
+
+      // Surface immediate feedback that /runtest was accepted and E2E is underway.
+      const checksUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}/checks`;
+      const existing = await github.rest.checks.listForRef({
+        owner,
+        repo,
+        ref: headSha,
+        check_name: 'E2E (Internal & Prod)',
+        per_page: 100,
+      });
+
+      const existingRun = existing.data.check_runs
+        .filter((run) => run.name === 'E2E (Internal & Prod)')
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+
+      const checkPayload = {
+        status: 'in_progress',
+        details_url: checksUrl,
+        output: {
+          title: 'E2E requested',
+          summary:
+            'Received /runtest. Running E2E Internal and Prod, then publishing gate result.',
+        },
+      };
+
+      if (existingRun) {
+        await github.rest.checks.update({
+          owner,
+          repo,
+          check_run_id: existingRun.id,
+          ...checkPayload,
+        });
+      } else {
+        await github.rest.checks.create({
+          owner,
+          repo,
+          name: 'E2E (Internal & Prod)',
+          head_sha: headSha,
+          ...checkPayload,
+        });
+      }
     }
   }
 
