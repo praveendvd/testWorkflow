@@ -93,6 +93,7 @@ jobs:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           HEAD_BRANCH: ${{ steps.pr.outputs.head_branch }}
           PULL_NUMBER: ${{ steps.pr.outputs.pull_number }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -100,12 +101,18 @@ jobs:
             const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
             const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
             const shortSha = process.env.HEAD_SHA.slice(0, 7);
+            const workflowRef = process.env.WORKFLOW_REF;
+            const dispatched = workflowRef.includes('/.github/workflows/')
+              ? workflowRef.split('/.github/workflows/')[1]
+              : workflowRef;
+            const commandBody = context.payload.comment.body || '';
+            const triggeredCommand = commandBody.includes('/runtests') ? '/runtests' : '/runchecks';
             const body = [
-              'PR checks were requested via slash command (/runtests / /runchecks).',
+              `PR checks were requested via slash command (${triggeredCommand}).`,
               '',
               `Branch: ${process.env.HEAD_BRANCH}`,
               `Commit: ${shortSha}`,
-              `Dispatched: mock-e2e-on-demand.yml@${process.env.HEAD_BRANCH}`,
+              `Dispatched: ${dispatched}`,
               `Workflow run: [${context.workflow}](${runUrl})`,
               `PR checks: [View checks](${checksUrl})`,
               'Track progress in GitHub Actions (workflow run links above). Required checks update when jobs finish.',
