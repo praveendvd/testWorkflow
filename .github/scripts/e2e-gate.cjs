@@ -19,12 +19,33 @@ module.exports = async ({ github, context, core }) => {
   let title = 'E2E Internal and Prod passed';
   let summary = `internal=${internal}, prod=${prod}`;
 
-  const validationPassed = validation === 'success' || (enableE2ECommentValidation && validation === 'skipped');
+  // When running via /runtests (issue_comment event), the validation job is
+  // skipped in this workflow run. Instead, verify that the same SHA already
+  // passed `validation / snyk-scan` in a prior pull_request workflow run.
+  let validationPassed = validation === 'success';
+  if (!validationPassed && enableE2ECommentValidation && validation === 'skipped') {
+    const priorChecks = await github.rest.checks.listForRef({
+      owner,
+      repo,
+      ref: headSha,
+      check_name: 'validation / snyk-scan',
+      per_page: 100,
+      filter: 'latest'
+    });
+    const snykPassed = priorChecks.data.check_runs.some(
+      run => run.name === 'validation / snyk-scan' && run.conclusion === 'success'
+    );
+    if (snykPassed) {
+      validationPassed = true;
+    }
+  }
 
   if (!validationPassed) {
     conclusion = 'failure';
     title = 'Validation did not succeed';
-    summary = `Validation result is ${validation}.`;
+    summary = enableE2ECommentValidation && validation === 'skipped'
+      ? `Validation has not passed for commit ${headSha}. Push a new commit or wait for the pull_request workflow to complete before running /runtests.`
+      : `Validation result is ${validation}.`;
   } else if (internal === 'success' && prod === 'success') {
     conclusion = 'success';
     title = 'E2E Internal and Prod passed';
