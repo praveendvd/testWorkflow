@@ -40,6 +40,7 @@ jobs:
         run: echo "Mock Prod E2E run completed"
 
   e2e-gate:
+    runs-on: ubuntu-latest
     name: E2E (Internal & Prod)
     needs: [validation, e2e-internal, e2e-prod]
     if: always()
