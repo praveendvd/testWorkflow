@@ -1,0 +1,74 @@
+name: Pull Request Validation
+
+# PR validation: build, test, bundle size, then repo-specific E2E tests (all PRs).
+#
+# RULESET: Require the single check "E2E (Internal & Prod)" in branch protection.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - master
+      - rc-sas
+      - 'release/**'
+
+jobs:
+  check-slash-command:
+    uses: ./.github/workflows/check-slash-command.yml
+    # This only runs on issue_comment events
+    if: always()
+
+  validation:
+    uses: .github/workflows/mock-snyk-scan.yml@master
+
+  e2e-internal:
+    if: needs.check-slash-command.outputs.should_run == 'true'
+    name: E2E Tests (Internal)
+    needs: [validation, check-slash-command]
+
+  e2e-prod:
+    name: E2E Tests (Prod)
+    needs: validation
+
+  # Single required check for ruleset: always runs, one clear name "E2E (Internal & Prod)".
+  e2e-gate:
+    name: E2E (Internal & Prod)
+    runs-on:
+      group: RXP-wdci-small
+    needs: [validation, e2e-internal, e2e-prod]
+    if: always()
+    steps:
+      - name: Gate - validation and E2E passed
+        run: |
+          VALIDATION="${{ needs.validation.result }}"
+          INTERNAL="${{ needs.e2e-internal.result }}"
+          PROD="${{ needs.e2e-prod.result }}"
+          ENABLE_E2E_COMMENT_VALIDATION="${{ vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' }}"
+
+          # Check if validation is required and failed
+          if [ "$VALIDATION" != 'success' ]; then
+            echo "Validation did not succeed (result=$VALIDATION) — gate fails"
+            exit 1
+          fi
+
+          # Check if E2E validation is enabled
+          if [ "$ENABLE_E2E_COMMENT_VALIDATION" = 'true' ]; then
+            # Check if E2E stages were skipped or not run
+            # In GitHub Actions, skipped jobs have result 'skipped'
+            if [ -z "$INTERNAL" ] || [ -z "$PROD" ] || [ "$INTERNAL" = 'skipped' ] || [ "$PROD" = 'skipped' ]; then
+              echo "::warning::E2E stages were not run. Please trigger E2E tests using /runtests or /runchecks comment."
+              echo "E2E gate waiting for user to trigger E2E tests."
+              echo "internal_result=$INTERNAL, prod_result=$PROD"
+              exit 0  # Exit with success to not block the PR, but with a warning
+            fi
+          fi
+
+          # Check if both E2E stages passed
+          if [ "$INTERNAL" = 'success' ] && [ "$PROD" = 'success' ]; then
+            echo "E2E Internal and Prod passed — gate passes"
+            exit 0
+          fi
+
+          # If we reach here, internal OR prod (or both) failed
+          echo "E2E gate failed: internal=$INTERNAL prod=$PROD"
+          exit 1
