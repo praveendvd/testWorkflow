@@ -24,7 +24,9 @@ jobs:
       should_run: ${{ steps.eval.outputs.should_run }}
       pull_number: ${{ steps.eval.outputs.pull_number }}
       head_sha: ${{ steps.eval.outputs.head_sha }}
+      check_run_id: ${{ steps.eval.outputs.check_run_id }}
     permissions:
+      checks: write
       contents: read
       pull-requests: read
     steps:
@@ -52,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Mock internal E2E run completed
-        run: echo "Mock internal E2E run completed"
+        run: sleep 5m && echo "Mock internal E2E run completed" 
 
   e2e-prod:
     if: always() && needs.comment-context.outputs.should_run == 'true'
@@ -89,6 +91,7 @@ jobs:
           E2E_PROD_RESULT: ${{ needs['e2e-prod'].result }}
           COMMENT_HEAD_SHA: ${{ needs.comment-context.outputs.head_sha }}
           COMMENT_PULL_NUMBER: ${{ needs.comment-context.outputs.pull_number }}
+          COMMENT_CHECK_RUN_ID: ${{ needs.comment-context.outputs.check_run_id }}
         with:
           script: |
             const path = require('path');
