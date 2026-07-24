@@ -64,3 +64,20 @@ Documentation-only future improvements (not implemented here):
 - Add structured error envelopes
 - Add rate limiting/backoff handling
 - Graduate to a lower-level tool registry only when advanced routing is needed
+
+## CI mock checks for PR merge gating
+
+This repository includes two mocked CI checks:
+
+- `mock-snyk-scan` workflow (`snyk-scan` job) runs on every PR commit.
+- `mock-e2e-on-demand` workflow creates an `e2e-on-demand` check only when a repo collaborator/member/owner comments `/runtests` on a PR.
+
+To enforce merge gating, set branch protection required status checks to:
+
+- `mock-snyk-scan / snyk-scan`
+- `e2e-on-demand`
+
+With these required checks enabled, PR merge stays blocked until:
+
+1. Snyk mock check succeeds on the latest commit.
+2. `/runtests` is commented for that latest commit and the on-demand E2E check completes successfully.
