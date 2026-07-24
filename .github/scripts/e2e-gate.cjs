@@ -44,6 +44,7 @@ module.exports = async ({ github, context }) => {
     eventName === 'pull_request'
       ? context.payload.pull_request.number
       : process.env.COMMENT_PULL_NUMBER ?? '';
+  const commentCheckRunId = process.env.COMMENT_CHECK_RUN_ID ?? '';
   const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
 
   const existing = await github.rest.checks.listForRef({
@@ -58,6 +59,10 @@ module.exports = async ({ github, context }) => {
     .filter((run) => run.name === 'E2E (Internal & Prod)')
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
 
+  console.error(
+    `[e2e-gate] event=${eventName} pr=${pull_number} head=${head_sha} validation=${validation} internal=${internal} prod=${prod} existing_run=${existingRun?.id ?? 'none'} comment_check_run_id=${commentCheckRunId || 'none'}`
+  );
+
   const checkPayload = {
     status: 'completed',
     conclusion,
@@ -68,21 +73,29 @@ module.exports = async ({ github, context }) => {
     },
   };
 
-  if (existingRun) {
+  const targetCheckRunId = commentCheckRunId || (existingRun ? String(existingRun.id) : '');
+
+  if (targetCheckRunId) {
     await github.rest.checks.update({
       owner,
       repo,
-      check_run_id: existingRun.id,
+      check_run_id: Number(targetCheckRunId),
       ...checkPayload,
     });
+    console.error(
+      `[e2e-gate] updated check_run_id=${targetCheckRunId} status=${checkPayload.status} conclusion=${checkPayload.conclusion}`
+    );
   } else {
-    await github.rest.checks.create({
+    const created = await github.rest.checks.create({
       owner,
       repo,
       name: 'E2E (Internal & Prod)',
       head_sha,
       ...checkPayload,
     });
+    console.error(
+      `[e2e-gate] created check_run_id=${created.data.id} status=${checkPayload.status} conclusion=${checkPayload.conclusion}`
+    );
   }
 
   // Do not fail this reporter job itself; the required check-run
