@@ -25,6 +25,7 @@ jobs:
       pull_number: ${{ steps.eval.outputs.pull_number }}
       head_sha: ${{ steps.eval.outputs.head_sha }}
     permissions:
+      checks: write
       contents: read
       pull-requests: read
     steps:
@@ -52,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Mock internal E2E run completed
-        run: echo "Mock internal E2E run completed"
+        run: sleep 5m && echo "Mock internal E2E run completed" 
 
   e2e-prod:
     if: always() && needs.comment-context.outputs.should_run == 'true'

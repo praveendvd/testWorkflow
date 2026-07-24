@@ -58,6 +58,10 @@ module.exports = async ({ github, context }) => {
     .filter((run) => run.name === 'E2E (Internal & Prod)')
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
 
+  console.error(
+    `[e2e-gate] event=${eventName} pr=${pull_number} head=${head_sha} validation=${validation} internal=${internal} prod=${prod} existing_run=${existingRun?.id ?? 'none'}`
+  );
+
   const checkPayload = {
     status: 'completed',
     conclusion,
@@ -75,14 +79,20 @@ module.exports = async ({ github, context }) => {
       check_run_id: existingRun.id,
       ...checkPayload,
     });
+    console.error(
+      `[e2e-gate] updated check_run_id=${existingRun.id} status=${checkPayload.status} conclusion=${checkPayload.conclusion}`
+    );
   } else {
-    await github.rest.checks.create({
+    const created = await github.rest.checks.create({
       owner,
       repo,
       name: 'E2E (Internal & Prod)',
       head_sha,
       ...checkPayload,
     });
+    console.error(
+      `[e2e-gate] created check_run_id=${created.data.id} status=${checkPayload.status} conclusion=${checkPayload.conclusion}`
+    );
   }
 
   // Do not fail this reporter job itself; the required check-run
