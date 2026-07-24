@@ -1,0 +1,20 @@
+name: mock-snyk-scan
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  snyk-scan:
+    name: snyk-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mock Snyk scan start
+        run: echo "scan ran"
+      - name: Mock Snyk scan progress
+        run: echo "scan progress"
+      - name: Mock Snyk scan complete
+        run: echo "scan completed"

@@ -1,0 +1,85 @@
+name: mock-e2e-on-demand
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  e2e-on-demand:
+    name: e2e-on-demand
+    if: >
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/runtests') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get PR head SHA
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.issue.number;
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number });
+            core.setOutput('head_sha', pr.data.head.sha);
+
+      - name: Mark E2E check as in progress
+        id: start_check
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const head_sha = process.env.HEAD_SHA;
+            const result = await github.rest.checks.create({
+              owner,
+              repo,
+              name: 'e2e-on-demand',
+              head_sha,
+              status: 'in_progress',
+              details_url: `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
+              output: {
+                title: 'Mock E2E started',
+                summary: 'Triggered by /runtests comment'
+              }
+            });
+            core.setOutput('check_run_id', result.data.id.toString());
+
+      - name: Mock E2E start
+        run: echo "e2e ran"
+
+      - name: Mock E2E progress
+        run: echo "e2e progress"
+
+      - name: Mock E2E complete
+        run: echo "e2e completed"
+
+      - name: Mark E2E check as completed
+        if: always() && steps.start_check.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const conclusion = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            const title = conclusion === 'success' ? 'Mock E2E completed' : 'Mock E2E failed';
+            const summary = conclusion === 'success'
+              ? 'e2e ran, e2e progress, e2e completed'
+              : 'The mock E2E workflow failed before completion.';
+            await github.rest.checks.update({
+              owner,
+              repo,
+              check_run_id: Number('${{ steps.start_check.outputs.check_run_id }}'),
+              status: 'completed',
+              conclusion,
+              completed_at: new Date().toISOString(),
+              output: {
+                title,
+                summary
+              }
+            });
