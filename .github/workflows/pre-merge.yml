@@ -8,16 +8,53 @@ on:
     branches:
       - master
       - rc-sas
-      - 'release/**'
+      - "release/**"
   issue_comment:
-    types: [created]  # Needed to react to slash commands
+    types: [created] # Needed to react to slash commands
 
 jobs:
   check-slash-command:
     uses: ./.github/workflows/comment-check.yml
 
+  e2e-required-until-slash-command:
+    name: e2e-required-until-slash-command
+    if: github.event_name == 'pull_request' && vars.ENABLE_E2E_COMMENT_VALIDATION == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    outputs:
+      check_run_id: ${{ steps.create_check.outputs.check_run_id }}
+    steps:
+      - name: Mark E2E check as required via slash command
+        id: create_check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const head_sha = context.payload.pull_request.head.sha;
+            const pull_number = context.payload.pull_request.number;
+            const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
+            const result = await github.rest.checks.create({
+              owner,
+              repo,
+              name: 'e2e-on-demand',
+              head_sha,
+              status: 'completed',
+              conclusion: 'failure',
+              details_url: checksUrl,
+              output: {
+                title: 'E2E not started — comment /runtests or /runchecks to trigger',
+                summary: 'Run /runtests (or /runchecks) in this PR to start E2E validation for this commit.'
+              }
+            });
+
+            core.setOutput('check_run_id', result.data.id.toString());
+
   validation:
-    uses: ./.github/workflows/mock-snyk-scan.yml  # ✅ Corrected path
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/mock-snyk-scan.yml # ✅ Corrected path
     # If this is a reusable workflow, you might not need '@master'
 
   e2e-internal:
@@ -28,7 +65,6 @@ jobs:
     steps:
       - name: Mock internal E2E run completed
         run: echo "Mock internal E2E run completed"
-  
 
   e2e-prod:
     if: needs.check-slash-command.outputs.should_run == 'true'
@@ -42,32 +78,95 @@ jobs:
   e2e-gate:
     runs-on: ubuntu-latest
     name: E2E (Internal & Prod)
-    needs: [validation, e2e-internal, e2e-prod]
-    if: always()
+    needs: [validation, e2e-internal, e2e-prod, e2e-required-until-slash-command]
+    if: github.event_name == 'pull_request' && always()
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
     steps:
-      - name: Gate - validation and E2E passed
-        run: |
-          VALIDATION="${{ needs.validation.result }}"
-          INTERNAL="${{ needs.e2e-internal.result }}"
-          PROD="${{ needs.e2e-prod.result }}"
-          ENABLE_E2E_COMMENT_VALIDATION="${{ vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' }}"
+      - name: Gate - upsert E2E check status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const validation = `${{ needs.validation.result }}`;
+            const internal = `${{ needs.e2e-internal.result }}`;
+            const prod = `${{ needs.e2e-prod.result }}`;
+            const enableE2ECommentValidation = `${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}` === 'true';
+            const existingCheckRunId = `${{ needs['e2e-required-until-slash-command'].outputs.check_run_id || '' }}`.trim();
 
-          if [ "$VALIDATION" != 'success' ]; then
-            echo "Validation did not succeed (result=$VALIDATION) — gate fails"
-            exit 1
-          fi
+            let conclusion = 'success';
+            let title = 'E2E gate passed';
+            let summary = `validation=${validation}, internal=${internal}, prod=${prod}`;
 
-          if [ "$ENABLE_E2E_COMMENT_VALIDATION" = 'true' ]; then
-            if [ -z "$INTERNAL" ] || [ -z "$PROD" ] || [ "$INTERNAL" = 'skipped' ] || [ "$PROD" = 'skipped' ]; then
-              echo "::error::E2E stages were not run. Please trigger E2E tests using /runtests or /runchecks comment."
-              exit 1
-            fi
-          fi
+            if (validation !== 'success') {
+              conclusion = 'failure';
+              title = 'Validation did not succeed';
+              summary = `Validation result is ${validation}.`;
+            } else if (enableE2ECommentValidation) {
+              const internalRan = internal && internal !== 'skipped';
+              const prodRan = prod && prod !== 'skipped';
 
-          if [ "$INTERNAL" = 'success' ] && [ "$PROD" = 'success' ]; then
-            echo "E2E Internal and Prod passed — gate passes"
-            exit 0
-          fi
+              if (!internalRan || !prodRan) {
+                conclusion = 'failure';
+                title = 'E2E not started';
+                summary = 'E2E stages were not run for the latest commit. Please trigger E2E tests using /runtests or /runchecks comment.';
+              } else if (internal === 'success' && prod === 'success') {
+                conclusion = 'success';
+                title = 'E2E Internal and Prod passed';
+                summary = 'Both E2E stages passed.';
+              } else {
+                conclusion = 'failure';
+                title = 'E2E failed';
+                summary = `E2E gate failed: internal=${internal}, prod=${prod}`;
+              }
+            } else {
+              const hasFailure = ['failure', 'cancelled'].includes(internal) || ['failure', 'cancelled'].includes(prod);
+              if (hasFailure) {
+                conclusion = 'failure';
+                title = 'E2E failed';
+                summary = `E2E gate failed: internal=${internal}, prod=${prod}`;
+              } else {
+                conclusion = 'success';
+                title = 'E2E gate passed';
+                summary = 'E2E comment validation is disabled; passing based on validation and available E2E results.';
+              }
+            }
 
-          echo "E2E gate failed: internal=$INTERNAL prod=$PROD"
-          exit 1
+            const { owner, repo } = context.repo;
+            const head_sha = context.payload.pull_request.head.sha;
+            const pull_number = context.payload.pull_request.number;
+            const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
+
+            if (existingCheckRunId) {
+              await github.rest.checks.update({
+                owner,
+                repo,
+                check_run_id: Number(existingCheckRunId),
+                status: 'completed',
+                conclusion,
+                details_url: checksUrl,
+                output: {
+                  title,
+                  summary
+                }
+              });
+            } else {
+              await github.rest.checks.create({
+                owner,
+                repo,
+                name: 'e2e-on-demand',
+                head_sha,
+                status: 'completed',
+                conclusion,
+                details_url: checksUrl,
+                output: {
+                  title,
+                  summary
+                }
+              });
+            }
+
+            if (conclusion === 'failure') {
+              core.setFailed(summary);
+            }
