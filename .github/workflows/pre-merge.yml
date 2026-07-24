@@ -25,6 +25,7 @@ jobs:
       pull_number: ${{ steps.eval.outputs.pull_number }}
       head_sha: ${{ steps.eval.outputs.head_sha }}
     permissions:
+      checks: write
       contents: read
       pull-requests: read
     steps:
