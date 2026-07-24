@@ -18,7 +18,7 @@ jobs:
 
   e2e-required-until-slash-command:
     name: e2e-required-until-slash-command
-    if: github.event_name == 'pull_request' && vars.ENABLE_E2E_COMMENT_VALIDATION == 'true'
+    if: github.event_name == 'issue_comment' && vars.ENABLE_E2E_COMMENT_VALIDATION == 'true'
     runs-on: ubuntu-latest
     permissions:
       checks: write

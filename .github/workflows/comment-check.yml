@@ -1,4 +1,5 @@
 name: Check Slash Command Condition
+
 on:
   workflow_call:
     outputs:
@@ -11,42 +12,63 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.condition.outputs.should_run }}
+    
     steps:
       - id: condition
+        env:
+          ENABLE_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
         run: |
-          # 1. If this workflow is triggered by a pull_request event, there is no comment.
-          #    In that case, we should NOT run E2E jobs.
-          if [ "${{ github.event_name }}" != "issue_comment" ]; then
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+          set -e
 
-          # 2. Now we are on an issue_comment event, so comment data exists.
-          COMMENT="${{ github.event.comment.body }}"
-          ASSOC="${{ github.event.comment.author_association }}"
-          IS_PR="${{ github.event.issue.pull_request != '' }}"
+          enable_validation="${ENABLE_VALIDATION:-false}"
+          should_run="false"
 
-          # 3. Check if the comment is on a pull request
-          if [ "$IS_PR" != "true" ]; then
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # 4. Check if E2E comment validation is enabled via repository variable
-          ENABLE_VALIDATION="${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}"
-          # If variable is not set or is "false", we always allow run (should_run=true)
-          # Otherwise, we enforce the slash command and author checks.
-          if [ "$ENABLE_VALIDATION" = "false" ] || [ -z "$ENABLE_VALIDATION" ]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # 5. Validation is enabled: check exact slash command and author association
-          # Allowed authors: OWNER, MEMBER, COLLABORATOR
-          # Allowed commands: /runtests or /runchecks (exact match)
-          if { [ "$ASSOC" = "OWNER" ] || [ "$ASSOC" = "MEMBER" ] || [ "$ASSOC" = "COLLABORATOR" ]; } && \
-             { [ "$COMMENT" = "/runtests" ] || [ "$COMMENT" = "/runchecks" ]; }; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
+          # 1. If validation is NOT explicitly "true", always run
+          if [[ "${enable_validation}" != "true" ]]; then
+            should_run="true"
           else
-            echo "should_run=false" >> $GITHUB_OUTPUT
+            # 2. Validation is enabled: check if the event is an issue_comment
+            if [[ "${GITHUB_EVENT_NAME}" != "issue_comment" ]]; then
+              should_run="false"
+            else
+              # 3. Extract data safely from the event payload using jq
+              # Get the comment body (empty string if null)
+              comment_raw=$(jq -r '.comment.body // ""' "$GITHUB_EVENT_PATH")
+              # Trim leading/trailing whitespace in pure Bash
+              comment="${comment_raw#"${comment_raw%%[![:space:]]*}"}"
+              comment="${comment%"${comment##*[![:space:]]}"}"
+
+              # Get author association
+              association=$(jq -r '.comment.author_association // ""' "$GITHUB_EVENT_PATH")
+              
+              # Check if this is a PR comment (issue.pull_request exists)
+              is_pr=$(jq -r '.issue.pull_request != null' "$GITHUB_EVENT_PATH")
+
+              allowed="false"
+
+              # 4. Logic: isPr && allowedAuthors && allowedCommands
+              if [[ "${is_pr}" == "true" ]]; then
+                # Check author association
+                if [[ "${association}" == "OWNER" || \
+                      "${association}" == "MEMBER" || \
+                      "${association}" == "COLLABORATOR" ]]; then
+                  # Check exact command match
+                  if [[ "${comment}" == "/runtests" || \
+                        "${comment}" == "/runchecks" ]]; then
+                    allowed="true"
+                  fi
+                fi
+              fi
+
+              if [[ "${allowed}" == "true" ]]; then
+                should_run="true"
+              else
+                should_run="false"
+              fi
+            fi
           fi
+
+          # 5. Set the output for other jobs to consume
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
