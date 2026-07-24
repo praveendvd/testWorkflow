@@ -28,7 +28,8 @@ module.exports = async ({ github, context, core }) => {
         repo,
         name: 'E2E (Internal & Prod)',
         head_sha: headSha,
-        status: 'queued',
+        status: 'completed',
+        conclusion: 'failure',
         details_url: checksUrl,
         output: {
           title: 'E2E not started',
