@@ -19,7 +19,9 @@ module.exports = async ({ github, context, core }) => {
   let title = 'E2E Internal and Prod passed';
   let summary = `internal=${internal}, prod=${prod}`;
 
-  if (validation !== 'success') {
+  const validationPassed = validation === 'success' || (enableE2ECommentValidation && validation === 'skipped');
+
+  if (!validationPassed) {
     conclusion = 'failure';
     title = 'Validation did not succeed';
     summary = `Validation result is ${validation}.`;
@@ -55,6 +57,7 @@ module.exports = async ({ github, context, core }) => {
       check_run_id: existingRun.id,
       status: 'completed',
       conclusion,
+      completed_at: new Date().toISOString(),
       details_url: checksUrl,
       output: { title, summary }
     });
