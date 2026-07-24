@@ -1,0 +1,27 @@
+name: Check Slash Command Condition
+on:
+  workflow_call:
+    outputs:
+      should_run:
+        value: ${{ jobs.check.outputs.should_run }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.condition.outputs.should_run }}
+    steps:
+      - id: condition
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          ASSOC="${{ github.event.comment.author_association }}"
+          IS_PR="${{ github.event.issue.pull_request != '' }}"
+          
+          if [ "${{ var.ENABLE_E2E_COMMENT_VALIDATION }}" = "false" ] || \
+             ( [ "$IS_PR" = "true" ] && \
+             { [ "$ASSOC" = "OWNER" ] || [ "$ASSOC" = "MEMBER" ] || [ "$ASSOC" = "COLLABORATOR" ]; } && \
+             { [ "$COMMENT" = "/runtests" ] || [ "$COMMENT" = "/runchecks" ]; } ); then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
