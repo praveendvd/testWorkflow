@@ -35,7 +35,6 @@ jobs:
 
   e2e-gate:
     name: E2E (Internal & Prod)
-    runs-on: group: RXP-wdci-small
     needs: [validation, e2e-internal, e2e-prod]
     if: always()
     steps:
