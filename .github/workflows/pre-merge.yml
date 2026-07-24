@@ -24,14 +24,20 @@ jobs:
     if: needs.check-slash-command.outputs.should_run == 'true'
     name: E2E Tests (Internal)
     needs: [validation, check-slash-command]
-    run: echo "hi internal done"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mock internal E2E run completed
+        run: echo "Mock internal E2E run completed"
   
 
   e2e-prod:
     if: needs.check-slash-command.outputs.should_run == 'true'
     name: E2E Tests (Prod)
     needs: [validation, check-slash-command]
-    run: echo "hi prd done"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mock Prod E2E run completed
+        run: echo "Mock Prod E2E run completed"
 
   e2e-gate:
     name: E2E (Internal & Prod)
