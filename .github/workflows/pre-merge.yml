@@ -14,7 +14,7 @@ on:
 
 jobs:
   check-slash-command:
-    uses: ./.github/workflows/check-slash-command.yml
+    uses: ./.github/workflows/omment-check.yml
 
   validation:
     uses: ./.github/workflows/mock-snyk-scan.yml  # ✅ Corrected path
