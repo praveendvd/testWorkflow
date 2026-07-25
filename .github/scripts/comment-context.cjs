@@ -47,25 +47,24 @@ module.exports = async ({ core, context, github }) => {
 
   // Create the check run ONLY if shouldRun is true
   let checkRunId = null;
-  if (shouldRun) {
-    const checkPayload = {
-      name: 'E2E (Internal & Prod)',
-      head_sha,
-      status: 'in_progress',  // or 'queued'
-      details_url: checksUrl,
-      output: {
-        title: 'E2E tests in progress',
-        summary: 'The E2E tests have been triggered and are running.',
-      },
-    };
-    const created = await github.rest.checks.create({
-      owner,
-      repo,
-      ...checkPayload,
-    });
-    checkRunId = created.data.id;
-    console.error(`[comment-context] Created check run ID: ${checkRunId}`);
-  }
+
+  const checkPayload = {
+    name: 'E2E (Internal & Prod)',
+    head_sha,
+    status: 'in_progress',  // or 'queued'
+    details_url: checksUrl,
+    output: {
+      title: 'E2E tests in progress',
+      summary: 'The E2E tests have been triggered and are running.',
+    },
+  };
+  const created = await github.rest.checks.create({
+    owner,
+    repo,
+    ...checkPayload,
+  });
+  checkRunId = created.data.id;
+  console.error(`[comment-context] Created check run ID: ${checkRunId}`);
 
   core.setOutput('should_run', shouldRun ? 'true' : 'false');
   core.setOutput('check_run_id', checkRunId ? String(checkRunId) : '');
