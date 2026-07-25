@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Mock internal E2E run completed
-        run: sleep 5m && echo "Mock internal E2E run completed" 
+        run: sleep 1m && echo "Mock internal E2E run completed" 
 
   e2e-prod:
     if: always() && needs.comment-context.outputs.should_run == 'true'
