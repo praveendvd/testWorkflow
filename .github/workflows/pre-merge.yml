@@ -21,25 +21,22 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.eval.outputs.should_run }}
+      check_run_id: ${{ steps.eval.outputs.check_run_id }}
     permissions:
+      checks: write
       pull-requests: read
+      issues: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Evaluate E2E run context
+      - uses: actions/checkout@v4
+      - name: Evaluate context and create check
         id: eval
         uses: actions/github-script@v7
         env:
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
         with:
           script: |
-            const path = require('path');
-            const run = require(path.join(
-              process.env.GITHUB_WORKSPACE,
-              '.github/scripts/comment-context.cjs'
-            ));
-            await run({ core, context });
+            const script = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/comment-context.cjs`);
+            await script({ core, context, github });
           
   e2e-internal:
     if: always() && needs.comment-context.outputs.should_run == 'true'
@@ -67,20 +64,18 @@ jobs:
     needs: [validation, comment-context, e2e-internal, e2e-prod]
     if: always()
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run E2E Gate Script
+      - uses: actions/checkout@v4
+      - name: Update E2E Gate Check
         uses: actions/github-script@v7
         env:
           E2E_INTERNAL_RESULT: ${{ needs.e2e-internal.result }}
           E2E_PROD_RESULT: ${{ needs.e2e-prod.result }}
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
+          CHECK_RUN_ID: ${{ needs.comment-context.outputs.check_run_id }}
         with:
           script: |
             const script = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/e2e-gate.cjs`);
-            await script({ github, context });
-    
+            await script({ core, context, github });
             
 
 
