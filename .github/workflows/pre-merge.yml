@@ -15,6 +15,7 @@ on:
 
 jobs:
   validation:
+    if: github.event_name == 'pull_request'
     uses: ./.github/workflows/mock-snyk-scan.yml
 
   comment-context:
