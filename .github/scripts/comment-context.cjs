@@ -21,31 +21,53 @@ module.exports = async ({ core, context, github }) => {
     shouldRun = true;
   }
 
-  // Determine head_sha and pull_number for check creation
+  // Determine head_sha and pull_number for check creation.
+  // For pull_request and PR issue_comment events these must be valid.
   const { owner, repo } = context.repo;
-  let head_sha;
-  let pull_number;
+  let head_sha = null;
+  let pull_number = null;
+  let isPrContext = false;
 
   if (eventName === 'pull_request') {
-    head_sha = context.payload.pull_request.head.sha;
-    pull_number = context.payload.pull_request.number;
+    head_sha = context.payload.pull_request?.head?.sha || null;
+    pull_number = context.payload.pull_request?.number || null;
+    isPrContext = true;
   } else if (eventName === 'issue_comment') {
+    if (!issue?.pull_request) {
+      core.info('[comment-context] issue_comment is not on a pull request. Skipping E2E check creation.');
+      core.setOutput('should_run', 'false');
+      core.setOutput('check_run_id', '');
+      return;
+    }
+
     const issueNumber = context.payload.issue.number;
     const { data: pullRequest } = await github.rest.pulls.get({
       owner,
       repo,
       pull_number: issueNumber,
     });
-    head_sha = pullRequest.head.sha;
+    head_sha = pullRequest?.head?.sha || null;
     pull_number = issueNumber;
+    isPrContext = true;
   } else {
-    head_sha = context.sha;
-    pull_number = 'unknown';
+    core.info(`[comment-context] Unsupported event \"${eventName}\". Skipping E2E check creation.`);
+    core.setOutput('should_run', 'false');
+    core.setOutput('check_run_id', '');
+    return;
+  }
+
+  if (!isPrContext || !pull_number || !head_sha) {
+    core.setFailed(
+      `[comment-context] Invalid PR context. event=${eventName}, pull_number=${String(
+        pull_number
+      )}, head_sha=${String(head_sha)}`
+    );
+    throw new Error('Unable to resolve required pull request number and head SHA.');
   }
 
   const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
 
-  // Create the check run ONLY if shouldRun is true
+  // Create the check run and require a valid ID.
   let checkRunId = null;
 
   const checkPayload = {
@@ -63,7 +85,13 @@ module.exports = async ({ core, context, github }) => {
     repo,
     ...checkPayload,
   });
-  checkRunId = created.data.id;
+  checkRunId = created?.data?.id ?? null;
+
+  if (!checkRunId) {
+    core.setFailed('[comment-context] Failed to create E2E check run: missing check run ID.');
+    throw new Error('check_run_id is mandatory but was not generated.');
+  }
+
   console.error(`[comment-context] Created check run ID: ${checkRunId}`);
 
   core.setOutput('should_run', shouldRun ? 'true' : 'false');

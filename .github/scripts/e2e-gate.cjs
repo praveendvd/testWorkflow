@@ -31,23 +31,23 @@ module.exports = async ({ core, context, github }) => {
 
   console.error(`[e2e-gate] conclusion=${conclusion}, checkRunId=${checkRunId}`);
 
-  // Update the check run if we have an ID
-  if (checkRunId) {
-    const { owner, repo } = context.repo;
-    await github.rest.checks.update({
-      owner,
-      repo,
-      check_run_id: parseInt(checkRunId, 10),
-      status: 'completed',
-      conclusion,
-      output: {
-        title,
-        summary,
-      },
-    });
-    console.error(`[e2e-gate] Updated check run ${checkRunId} to ${conclusion}`);
-  } else {
-    console.error('[e2e-gate] No check_run_id provided, cannot update.');
-    // Optionally, you could fallback to creating a new check, but the design expects it exists.
+  const parsedCheckRunId = Number.parseInt(checkRunId || '', 10);
+  if (!Number.isInteger(parsedCheckRunId) || parsedCheckRunId <= 0) {
+    core.setFailed('[e2e-gate] check_run_id is mandatory and must be a valid integer.');
+    throw new Error('Missing or invalid check_run_id; cannot update E2E gate check.');
   }
+
+  const { owner, repo } = context.repo;
+  await github.rest.checks.update({
+    owner,
+    repo,
+    check_run_id: parsedCheckRunId,
+    status: 'completed',
+    conclusion,
+    output: {
+      title,
+      summary,
+    },
+  });
+  console.error(`[e2e-gate] Updated check run ${parsedCheckRunId} to ${conclusion}`);
 };
