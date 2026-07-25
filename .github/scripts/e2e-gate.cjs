@@ -31,23 +31,32 @@ module.exports = async ({ core, context, github }) => {
 
   console.error(`[e2e-gate] conclusion=${conclusion}, checkRunId=${checkRunId}`);
 
-  // Update the check run if we have an ID
-  if (checkRunId) {
-    const { owner, repo } = context.repo;
-    await github.rest.checks.update({
-      owner,
-      repo,
-      check_run_id: parseInt(checkRunId, 10),
-      status: 'completed',
-      conclusion,
-      output: {
-        title,
-        summary,
-      },
-    });
-    console.error(`[e2e-gate] Updated check run ${checkRunId} to ${conclusion}`);
-  } else {
-    console.error('[e2e-gate] No check_run_id provided, cannot update.');
-    // Optionally, you could fallback to creating a new check, but the design expects it exists.
+  // Create the final check run with the conclusion
+  const { owner, repo } = context.repo;
+  let head_sha = context.sha;
+  if (context.eventName === 'pull_request') {
+    head_sha = context.payload.pull_request.head.sha;
   }
+
+  const checkPayload = {
+    name: 'E2E (Internal & Prod)',
+    head_sha,
+    status: 'completed',
+    conclusion,
+    output: {
+      title,
+      summary,
+    },
+  };
+
+  await github.rest.checks.create({
+    owner,
+    repo,
+    ...checkPayload,
+  });
+  console.error(`[e2e-gate] Created final check with conclusion=${conclusion}`);
+
+
+
+
 };
