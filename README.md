@@ -15,7 +15,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
    ```bash
    npm install
    ```
-2. Copy env template and set real Jira credentials:
+2. Copy env template and set real Jira credentials:hg
    ```bash
    cp .env.example .env
    ```
