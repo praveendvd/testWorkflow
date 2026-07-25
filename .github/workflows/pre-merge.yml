@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     name: E2E Gate
     needs: [validation, comment-context, e2e-internal, e2e-prod]
-    if: always()
+    if: always() && needs.comment-context.outputs.check_run_id != ''
     steps:
       - uses: actions/checkout@v4
       - name: Update E2E Gate Check
