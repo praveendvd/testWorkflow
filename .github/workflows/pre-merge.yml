@@ -15,19 +15,13 @@ on:
 
 jobs:
   validation:
-    if: github.event_name == 'pull_request'
     uses: ./.github/workflows/mock-snyk-scan.yml
 
   comment-context:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.eval.outputs.should_run }}
-      pull_number: ${{ steps.eval.outputs.pull_number }}
-      head_sha: ${{ steps.eval.outputs.head_sha }}
-      check_run_id: ${{ steps.eval.outputs.check_run_id }}
     permissions:
-      checks: write
-      contents: read
       pull-requests: read
     steps:
       - name: Checkout
@@ -45,7 +39,7 @@ jobs:
               process.env.GITHUB_WORKSPACE,
               '.github/scripts/comment-context.cjs'
             ));
-            await run({ core, github, context });
+            await run({ core, context });
           
   e2e-internal:
     if: always() && needs.comment-context.outputs.should_run == 'true'
@@ -66,37 +60,80 @@ jobs:
         run: echo "Mock Prod E2E run completed"
 
   e2e-gate:
-    runs-on: ubuntu-latest
-    name: E2E Gate Reporter
-    needs: [validation, comment-context, e2e-internal, e2e-prod]
-    if: >
-      always() && (
-        github.event_name == 'pull_request' ||
-        needs.comment-context.outputs.should_run == 'true'
-      )
     permissions:
       checks: write
-      contents: read
-      pull-requests: read
+    runs-on: ubuntu-latest
+    name: E2E (Internal & Prod)
+    needs: [validation, comment-context, e2e-internal, e2e-prod]
+    # Force this job to run even if upstream jobs fail or are skipped
+    if: always() 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # SCENARIO 1: Upstream tests explicitly failed
+      - name: Report Failure
+        if: |
+          needs.e2e-internal.result == 'failure' || 
+          needs.e2e-prod.result == 'failure' || 
+          needs.validation.result == 'failure'
+        run: |
+          echo "::error::Test failed. Check the logs above and fix it."
+          exit 1
 
-      - name: Evaluate and publish required E2E check
+      # SCENARIO 2: Upstream tests were skipped entirely
+      - name: Report Not Run
+        if: |
+          needs.e2e-internal.result == 'skipped' || 
+          needs.e2e-prod.result == 'skipped'
+        run: |
+          echo "::error::Tests never ran. Trigger a run with comment /runtests"
+          exit 1
+
+      # SCENARIO 3: Everything passed perfectly
+      - name: Success Gate
+        if: |
+          needs.e2e-internal.result == 'success' && 
+          needs.e2e-prod.result == 'success' && 
+          needs.validation.result == 'success'
         uses: actions/github-script@v7
-        env:
-          ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
-          VALIDATION_RESULT: ${{ needs.validation.result }}
-          E2E_INTERNAL_RESULT: ${{ needs['e2e-internal'].result }}
-          E2E_PROD_RESULT: ${{ needs['e2e-prod'].result }}
-          COMMENT_HEAD_SHA: ${{ needs.comment-context.outputs.head_sha }}
-          COMMENT_PULL_NUMBER: ${{ needs.comment-context.outputs.pull_number }}
-          COMMENT_CHECK_RUN_ID: ${{ needs.comment-context.outputs.check_run_id }}
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const path = require('path');
-            const run = require(path.join(
-              process.env.GITHUB_WORKSPACE,
-              '.github/scripts/e2e-gate.cjs'
-            ));
-            await run({ github, context });
+            const { owner, repo } = context.repo;
+            const sha = context.sha;
+            const checkName = 'E2E (Internal & Prod)'; // Replace with your check's name
+
+            // 1. Find any existing check run with this name for the current commit
+            const listResponse = await github.rest.checks.listForRef({
+              owner,
+              repo,
+              ref: sha,
+              check_name: checkName,
+            });
+
+            const existingCheck = listResponse.data.check_runs[0];
+
+            if (existingCheck) {
+              // 2. If it exists, update it to success
+              await github.rest.checks.update({
+                owner,
+                repo,
+                check_run_id: existingCheck.id,
+                status: 'completed',
+                conclusion: 'success',
+              });
+              console.log(`Updated existing check run (ID: ${existingCheck.id}) to success.`);
+            } else {
+              // 3. If it doesn't exist, create a new one with a success status
+              await github.rest.checks.create({
+                owner,
+                repo,
+                name: checkName,
+                head_sha: sha,
+                status: 'completed',
+                conclusion: 'success',
+              });
+              console.log(`Created a new check run '${checkName}' with success status.`);
+            }
+
+
+    
+
