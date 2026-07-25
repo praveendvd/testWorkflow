@@ -1,7 +1,7 @@
 # Jira MCP Example (stdio)...
 
 ## What this is
-
+aS
 This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars against Jira REST API v2: tools, resources, and prompts.
 
 ## Prerequisites
