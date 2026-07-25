@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SNYK_FAIL: ${{ vars.SNYK_FAIL }}
+
 jobs:
   snyk-scan:
     name: snyk-scan
@@ -18,3 +21,6 @@ jobs:
         run: echo "scan progress"
       - name: Mock Snyk scan complete
         run: echo "scan completed"
+      - name: fail snyk scan
+        if: env.SNYK_FAIL == 'true'   
+        run: exit 1
