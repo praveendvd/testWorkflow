@@ -76,8 +76,6 @@ jobs:
           E2E_INTERNAL_RESULT: ${{ needs.e2e-internal.result }}
           E2E_PROD_RESULT: ${{ needs.e2e-prod.result }}
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
-          COMMENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.issue.pull_request.head.sha || '' }}
-          COMMENT_PULL_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || '' }}
         with:
           script: |
             const script = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/e2e-gate.cjs`);
