@@ -10,48 +10,57 @@ module.exports = async ({ github, context }) => {
   let title = 'E2E (Internal & Prod)';
   let summary = '';
 
-  // Rule 2: both passed -> success
   if (internalResult === 'success' && prodResult === 'success') {
     conclusion = 'success';
     title = 'E2E Internal and Prod passed';
     summary = 'Both E2E stages passed successfully.';
     console.error('[e2e-gate] Both E2E passed -> success');
-  }
-  // Rule 3: both skipped and comment validation enabled -> failure with skip message
-  else if (internalResult === 'skipped' && prodResult === 'skipped') {
+  } else if (internalResult === 'skipped' && prodResult === 'skipped') {
     if (enableE2ECommentValidation) {
       conclusion = 'failure';
       title = 'E2E skipped';
-      summary =
-        'E2E skipped. Comment /runtests on this PR to run E2E on the latest head commit.';
+      summary = 'E2E skipped. Comment /runtests on this PR to run E2E on the latest head commit.';
       console.error('[e2e-gate] Both skipped, comment validation enabled -> failure (skip)');
     } else {
-      // Rule 4: comment validation disabled -> failure because both must succeed
       conclusion = 'failure';
       title = 'E2E required but skipped';
-      summary =
-        'ENABLE_E2E_COMMENT_VALIDATION is false, but both E2E stages were skipped. They must succeed.';
+      summary = 'ENABLE_E2E_COMMENT_VALIDATION is false, but both E2E stages were skipped. They must succeed.';
       console.error('[e2e-gate] Both skipped, comment validation disabled -> failure');
     }
-  }
-  // Rule 5: any other combination (one fails, one skips, one passes, etc.) -> failure
-  else {
+  } else {
     conclusion = 'failure';
     title = 'E2E gate failed';
     summary = `E2E gate failed: internal=${internalResult}, prod=${prodResult}`;
     console.error(`[e2e-gate] Unsuccessful combination: internal=${internalResult}, prod=${prodResult} -> failure`);
   }
 
-  // Determine head_sha and pull_number for the check
+  // --- Determine head_sha ---
   const { owner, repo } = context.repo;
-  const head_sha =
-    eventName === 'pull_request'
-      ? context.payload.pull_request.head.sha
-      : process.env.COMMENT_HEAD_SHA ?? '';
-  const pull_number =
-    eventName === 'pull_request'
-      ? context.payload.pull_request.number
-      : process.env.COMMENT_PULL_NUMBER ?? '';
+  let head_sha;
+  let pull_number;
+
+  if (eventName === 'pull_request') {
+    head_sha = context.payload.pull_request.head.sha;
+    pull_number = context.payload.pull_request.number;
+  } else if (eventName === 'issue_comment') {
+    // Get the PR number from the issue
+    const issueNumber = context.payload.issue.number;
+    // Fetch the pull request to get its head SHA
+    const { data: pullRequest } = await github.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: issueNumber,
+    });
+    head_sha = pullRequest.head.sha;
+    pull_number = issueNumber;
+    console.error(`[e2e-gate] Fetched PR #${issueNumber} head SHA: ${head_sha}`);
+  } else {
+    // Fallback: use context.sha (the commit that triggered the workflow)
+    head_sha = context.sha;
+    pull_number = 'unknown';
+    console.warn(`[e2e-gate] Unknown event type: ${eventName}, using context.sha: ${head_sha}`);
+  }
+
   const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
 
   console.error(
@@ -80,5 +89,4 @@ module.exports = async ({ github, context }) => {
   console.error(
     `[e2e-gate] created check_run_id=${created.data.id} status=completed conclusion=${conclusion}`
   );
-  // Do not fail the reporter job; the check run itself carries the gating status.
 };
