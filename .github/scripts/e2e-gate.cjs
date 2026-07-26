@@ -2,7 +2,6 @@ module.exports = async ({ core, context, github }) => {
   const internalResult = process.env.E2E_INTERNAL_RESULT ?? '';
   const prodResult = process.env.E2E_PROD_RESULT ?? '';
   const enableE2ECommentValidation = process.env.ENABLE_E2E_COMMENT_VALIDATION === 'true';
-  const checkRunId = process.env.CHECK_RUN_ID; // passed from workflow
 
   // Determine conclusion based on your rules
   let conclusion = 'success';
@@ -52,9 +51,6 @@ module.exports = async ({ core, context, github }) => {
   }
 
   const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
-
-  // Create the check run ONLY if shouldRun is true
-  let checkRunId = null;
 
   const checkPayload = {
     name: 'E2E (Internal & Prod)',
