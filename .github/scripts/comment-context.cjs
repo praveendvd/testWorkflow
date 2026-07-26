@@ -50,7 +50,6 @@ module.exports = async ({ core, context, github }) => {
 
   const checkPayload = {
     name: 'E2E (Internal & Prod)',
-    head_sha,
     status: 'in_progress',  // or 'queued'
     details_url: checksUrl,
     output: {
