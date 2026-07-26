@@ -19,7 +19,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
    ```bash
    cp .env.example .env
    ```
-3. Build:
+3. Build:ad
    ```bash
    npm run build
    ```
