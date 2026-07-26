@@ -26,14 +26,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_API_URL: https://api.github.com
+          REPO_FULL: ${{ github.repository }}   # e.g., "praveendvd/testWorkflow"
         run: |
           set -e
           CHECK_NAME="E2E (Internal & Prod)"
           STATUS="in_progress"
-          HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
-          REPO="${{ github.repository }}"
-          OWNER="${{ github.repository_owner }}"
 
+          HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
           echo "Target Commit SHA: $HEAD_SHA"
 
           if [ -z "$HEAD_SHA" ] || [ "$HEAD_SHA" = "null" ]; then
@@ -53,7 +52,7 @@ jobs:
                   \"head_sha\": \"$HEAD_SHA\",
                   \"status\": \"$STATUS\"
                 }" \
-              "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs")
+              "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs")
 
             CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
             if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
@@ -84,17 +83,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_API_URL: https://api.github.com
+          REPO_FULL: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           CHECK_NAME="E2E (Internal & Prod)"
           HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
-          REPO="${{ github.repository }}"
-          OWNER="${{ github.repository_owner }}"
 
           echo "=== Step 1: Fetch all commits in PR ==="
           COMMITS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/commits" \
+            "${GITHUB_API_URL}/repos/${REPO_FULL}/pulls/${PR_NUMBER}/commits" \
             | jq -r '.[].sha')
           echo "Commits: $COMMITS"
 
@@ -102,7 +100,7 @@ jobs:
           for SHA in $COMMITS; do
             CHECK_RUNS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-              "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/commits/${SHA}/check-runs")
+              "${GITHUB_API_URL}/repos/${REPO_FULL}/commits/${SHA}/check-runs")
             STALE_IDS=$(echo "$CHECK_RUNS" | jq -r '.check_runs[] | select(.name=="'"$CHECK_NAME"'") | .id')
             if [ -n "$STALE_IDS" ]; then
               for CID in $STALE_IDS; do
@@ -112,7 +110,7 @@ jobs:
                   -H "Accept: application/vnd.github+json" \
                   -H "Content-Type: application/json" \
                   -d '{"status":"completed","conclusion":"cancelled"}' \
-                  "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs/${CID}" > /dev/null
+                  "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs/${CID}" > /dev/null
               done
             fi
           done
@@ -129,7 +127,7 @@ jobs:
                 \"head_sha\": \"$HEAD_SHA\",
                 \"status\": \"in_progress\"
               }" \
-            "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs")
+            "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs")
           NEW_CHECK_ID=$(echo "$NEW_RESPONSE" | jq -r '.id')
           echo "New check ID: $NEW_CHECK_ID"
 
@@ -141,6 +139,6 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Content-Type: application/json" \
             -d '{"status":"completed","conclusion":"success"}' \
-            "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs/${NEW_CHECK_ID}" > /dev/null
+            "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs/${NEW_CHECK_ID}" > /dev/null
 
           echo "All done. PR status should now show SUCCESS."
