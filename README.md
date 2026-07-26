@@ -17,7 +17,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
    ```
 2. Copy env template and set real Jira credentials:
    ```bash
-   cp .env.example .env
+   cp .env.example .envsf
    ```
 3. Build:
    ```bash
