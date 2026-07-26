@@ -22,7 +22,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
 3. Build:
    ```bash
    npm run build
-   ```
+   ```asd
 
 ## Cursor
 
