@@ -1,71 +1,96 @@
 name: Manage GitHub Checks
 
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - main
+      - master
+      - rc-sas
+      - "release/**"
+
 jobs:
-  create_checks:
+  create_check:
     runs-on: ubuntu-latest
     permissions:
       checks: write
       contents: read
+      pull-requests: read
     outputs:
-      last_check_id: ${{ steps.check_creator.outputs.last_id }}
+      check_run_id: ${{ steps.create.outputs.check_run_id }}
+      target_sha: ${{ steps.resolve_sha.outputs.target_sha }}
 
     steps:
-      - name: Create 5 Checks and Save Last ID
-        id: check_creator
+      - name: Resolve target SHA (merge preview, else head)
+        id: resolve_sha
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CHECK_NAME="E2E (Internal & Prod)"
-          STATUS="in_progress"
-          
-          # Get commit SHA from PR context (uses PR head if available, else current commit)
+          set -euo pipefail
+          API="https://api.github.com/repos/${{ github.repository }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
-          echo "Target Commit SHA: $HEAD_SHA"
-          
-          # Loop 5 times to create 5 distinct checks
-          for i in {1..5}; do
-            echo "Creating check run #$i..."
-            
-            RESPONSE=$(curl -s -X POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/check-runs" \
-              -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"$STATUS\"}")
-            
-            CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
-            echo "Check run #$i created with ID: $CHECK_ID"
-            
-            # Keep the last ID for the next job
-            LAST_ID="$CHECK_ID"
-          done
-          
-          if [ -z "$LAST_ID" ] || [ "$LAST_ID" = "null" ]; then
-            echo "Error: Check creation failed. Response received: $RESPONSE"
+          MERGE_SHA="${{ github.event.pull_request.merge_commit_sha || '' }}"
+          PR_NUMBER="${{ github.event.pull_request.number || '' }}"
+
+          if [ -n "$MERGE_SHA" ] && [ "$MERGE_SHA" != "null" ]; then
+            echo "target_sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "$PR_NUMBER" ]; then
+            for i in $(seq 1 10); do
+              sleep 3
+              FETCHED=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "$API/pulls/$PR_NUMBER" | jq -r '.merge_commit_sha')
+              if [ -n "$FETCHED" ] && [ "$FETCHED" != "null" ]; then
+                echo "target_sha=$FETCHED" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+          fi
+
+          echo "target_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create E2E check (in progress)
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ steps.resolve_sha.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          CHECK_NAME="E2E (Internal & Prod)"
+          RESPONSE=$(curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+            -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$TARGET_SHA\",\"status\":\"in_progress\"}")
+
+          CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
+          if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
+            echo "Create failed: $RESPONSE"
             exit 1
           fi
-          
-          echo "last_id=$LAST_ID" >> "$GITHUB_OUTPUT"
+          echo "check_run_id=$CHECK_ID" >> "$GITHUB_OUTPUT"
 
-  use_check_id:
+  complete_check:
     runs-on: ubuntu-latest
-    needs: create_checks
+    needs: create_check
+    if: always() && needs.create_check.result == 'success'
     permissions:
       checks: write
     steps:
-      - name: Update Last Check to Success
+      - name: Mark E2E check success
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHECK_ID: ${{ needs.create_checks.outputs.last_check_id }}
+          CHECK_ID: ${{ needs.create_check.outputs.check_run_id }}
         run: |
-          if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
-            echo "Error: Invalid Check ID"
-            exit 1
-          fi
-          
-          curl -X PATCH \
-            -H "Accept: application/vnd.github+json" \
+          set -euo pipefail
+          curl -sS -X PATCH \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
             "https://api.github.com/repos/${{ github.repository }}/check-runs/$CHECK_ID" \
             -d '{"status":"completed","conclusion":"success"}'
