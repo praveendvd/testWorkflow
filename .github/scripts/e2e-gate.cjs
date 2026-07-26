@@ -28,26 +28,53 @@ module.exports = async ({ core, context, github }) => {
     title = 'E2E gate failed';
     summary = `E2E gate failed: internal=${internalResult}, prod=${prodResult}`;
   }
+  // Determine head_sha and pull_number for check creation
+  const { owner, repo } = context.repo;
+  let head_sha;
+  let pull_number;
 
-  console.error(`[e2e-gate] conclusion=${conclusion}, checkRunId=${checkRunId}`);
-
-  // Update the check run if we have an ID
-  if (checkRunId) {
-    const { owner, repo } = context.repo;
-    await github.rest.checks.update({
+  const eventName = context.eventName;
+  if (eventName === 'pull_request') {
+    head_sha = context.payload.pull_request.head.sha;
+    pull_number = context.payload.pull_request.number;
+  } else if (eventName === 'issue_comment') {
+    const issueNumber = context.payload.issue.number;
+    const { data: pullRequest } = await github.rest.pulls.get({
       owner,
       repo,
-      check_run_id: parseInt(checkRunId, 10),
-      status: 'completed',
-      conclusion,
-      output: {
-        title,
-        summary,
-      },
+      pull_number: issueNumber,
     });
-    console.error(`[e2e-gate] Updated check run ${checkRunId} to ${conclusion}`);
+    head_sha = pullRequest.head.sha;
+    pull_number = issueNumber;
   } else {
-    console.error('[e2e-gate] No check_run_id provided, cannot update.');
-    // Optionally, you could fallback to creating a new check, but the design expects it exists.
+    head_sha = context.sha;
+    pull_number = 'unknown';
   }
+
+  const checksUrl = `https://github.com/${owner}/${repo}/pull/${pull_number}/checks`;
+
+  // Create the check run ONLY if shouldRun is true
+  let checkRunId = null;
+
+  const checkPayload = {
+    name: 'E2E (Internal & Prod)',
+    head_sha,
+    status: 'completed',  // or 'queued'
+    details_url: checksUrl,
+    conclusion,
+    output: {
+      title,
+      summary,
+    },
+  };
+  const created = await github.rest.checks.create({
+    owner,
+    repo,
+    ...checkPayload,
+  });
+  checkRunId = created.data.id;
+  console.error(`[comment-context] Created check run ID: ${checkRunId}`);
+
 };
+
+
