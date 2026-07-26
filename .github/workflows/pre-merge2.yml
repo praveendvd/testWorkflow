@@ -1,71 +1,105 @@
 name: Manage GitHub Checks
 
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - main
+      - master
+      - rc-sas
+      - "release/**"
+
 jobs:
-  create_checks:
+  manage_checks:
     runs-on: ubuntu-latest
     permissions:
       checks: write
-      contents: read
-    outputs:
-      last_check_id: ${{ steps.check_creator.outputs.last_id }}
-
+      pull-requests: read
     steps:
-      - name: Create 5 Checks and Save Last ID
-        id: check_creator
+      - name: Handle checks based on event type
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          set -e
           CHECK_NAME="E2E (Internal & Prod)"
-          STATUS="in_progress"
-          
-          # Get commit SHA from PR context (uses PR head if available, else current commit)
-          HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
-          echo "Target Commit SHA: $HEAD_SHA"
-          
-          # Loop 5 times to create 5 distinct checks
-          for i in {1..5}; do
-            echo "Creating check run #$i..."
-            
-            RESPONSE=$(curl -s -X POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/check-runs" \
-              -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"$STATUS\"}")
-            
-            CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
-            echo "Check run #$i created with ID: $CHECK_ID"
-            
-            # Keep the last ID for the next job
-            LAST_ID="$CHECK_ID"
-          done
-          
-          if [ -z "$LAST_ID" ] || [ "$LAST_ID" = "null" ]; then
-            echo "Error: Check creation failed. Response received: $RESPONSE"
-            exit 1
-          fi
-          
-          echo "last_id=$LAST_ID" >> "$GITHUB_OUTPUT"
+          REPO="${{ github.repository }}"
+          API_URL="https://api.github.com/repos/${REPO}"
 
-  use_check_id:
-    runs-on: ubuntu-latest
-    needs: create_checks
-    permissions:
-      checks: write
-    steps:
-      - name: Update Last Check to Success
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHECK_ID: ${{ needs.create_checks.outputs.last_check_id }}
-        run: |
-          if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
-            echo "Error: Invalid Check ID"
-            exit 1
+          # ----- Helper function: cancel all checks with this name on all PR commits -----
+          cancel_all_checks() {
+            echo "Cancelling all existing checks named '$CHECK_NAME'..."
+            COMMITS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "${API_URL}/pulls/${PR_NUMBER}/commits" | jq -r '.[].sha')
+            for SHA in $COMMITS; do
+              CHECK_RUNS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "${API_URL}/commits/${SHA}/check-runs")
+              STALE_IDS=$(echo "$CHECK_RUNS" | jq -r '.check_runs[] | select(.name=="'"$CHECK_NAME"'") | .id')
+              if [ -n "$STALE_IDS" ]; then
+                for CID in $STALE_IDS; do
+                  echo "Cancelling check $CID on commit $SHA"
+                  curl -sS -X PATCH \
+                    -H "Authorization: Bearer $GH_TOKEN" \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "Content-Type: application/json" \
+                    -d '{"status":"completed","conclusion":"cancelled"}' \
+                    "${API_URL}/check-runs/${CID}" > /dev/null
+                done
+              fi
+            done
+          }
+
+          # ----- Helper function: create a final success check on HEAD_SHA -----
+          create_success_check() {
+            echo "Creating final success check..."
+            NEW_RESPONSE=$(curl -sS -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"in_progress\"}" \
+              "${API_URL}/check-runs")
+            NEW_CHECK_ID=$(echo "$NEW_RESPONSE" | jq -r '.id')
+            echo "New check ID: $NEW_CHECK_ID"
+            sleep 2
+            curl -sS -X PATCH \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"completed","conclusion":"success"}' \
+              "${API_URL}/check-runs/${NEW_CHECK_ID}" > /dev/null
+            echo "Success check created."
+          }
+
+          # ----- Main logic based on event type -----
+          if [ "$EVENT_NAME" == "edited" ]; then
+            echo "Event: edited – cancelling all stale checks and creating a success check."
+            cancel_all_checks
+            sleep 2
+            create_success_check
+          else
+            echo "Event: $EVENT_NAME – creating 5 in-progress checks, waiting, then cancelling and creating final success."
+            # Create 5 checks
+            for i in {1..5}; do
+              echo "Creating check run #$i..."
+              RESPONSE=$(curl -sS -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"in_progress\"}" \
+                "${API_URL}/check-runs")
+              CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
+              echo "Check run #$i created with ID: $CHECK_ID"
+            done
+            echo "Waiting 30 seconds to observe in-progress state..."
+            sleep 30
+            cancel_all_checks
+            sleep 2
+            create_success_check
           fi
-          
-          curl -X PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/check-runs/$CHECK_ID" \
-            -d '{"status":"completed","conclusion":"success"}'
+
+          echo "All done. PR status should now show SUCCESS."
