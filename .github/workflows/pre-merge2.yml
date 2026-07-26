@@ -1,5 +1,17 @@
 name: Manage GitHub Checks
 
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - main
+      - master
+      - rc-sas
+      - "release/**"
+  issue_comment:
+    types: [created]
+
 jobs:
   create_checks:
     runs-on: ubuntu-latest
@@ -8,64 +20,92 @@ jobs:
       contents: read
     outputs:
       last_check_id: ${{ steps.check_creator.outputs.last_id }}
-
     steps:
       - name: Create 5 Checks and Save Last ID
         id: check_creator
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -e
           CHECK_NAME="E2E (Internal & Prod)"
           STATUS="in_progress"
-          
-          # Get commit SHA from PR context (uses PR head if available, else current commit)
+
           HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
           echo "Target Commit SHA: $HEAD_SHA"
-          
-          # Loop 5 times to create 5 distinct checks
-          for i in {1..5}; do
-            echo "Creating check run #$i..."
-            
-            RESPONSE=$(curl -s -X POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/check-runs" \
-              -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"$STATUS\"}")
-            
-            CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
-            echo "Check run #$i created with ID: $CHECK_ID"
-            
-            # Keep the last ID for the next job
-            LAST_ID="$CHECK_ID"
-          done
-          
-          if [ -z "$LAST_ID" ] || [ "$LAST_ID" = "null" ]; then
-            echo "Error: Check creation failed. Response received: $RESPONSE"
+
+          if [ -z "$HEAD_SHA" ] || [ "$HEAD_SHA" = "null" ]; then
+            echo "ERROR: HEAD_SHA is empty or null"
             exit 1
           fi
-          
+
+          LAST_ID=""
+          for i in {1..5}; do
+            echo "Creating check run #$i..."
+            CHECK_ID=$(gh api \
+              -X POST /repos/${{ github.repository }}/check-runs \
+              -f name="$CHECK_NAME" \
+              -f head_sha="$HEAD_SHA" \
+              -f status="$STATUS" \
+              --jq '.id')
+
+            if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
+              echo "ERROR: Failed to create check run #$i"
+              exit 1
+            fi
+
+            echo "Check run #$i created with ID: $CHECK_ID"
+            LAST_ID="$CHECK_ID"
+          done
+
           echo "last_id=$LAST_ID" >> "$GITHUB_OUTPUT"
 
-  use_check_id:
+  update_all:
     runs-on: ubuntu-latest
     needs: create_checks
+    if: always() && needs.create_checks.result == 'success'
     permissions:
       checks: write
     steps:
-      - name: Update Last Check to Success
+      - name: Fetch all checks, log, cancel all, then mark last as success
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHECK_ID: ${{ needs.create_checks.outputs.last_check_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          LAST_CHECK_ID: ${{ needs.create_checks.outputs.last_check_id }}
         run: |
-          if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
-            echo "Error: Invalid Check ID"
-            exit 1
+          echo "=== FETCHING ALL CHECK RUNS (UNFILTERED) ==="
+          ALL_CHECKS=$(gh api --paginate /repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs --jq '.check_runs[] | {id: .id, name: .name, status: .status, conclusion: .conclusion}')
+          echo "All checks for commit $HEAD_SHA:"
+          echo "$ALL_CHECKS" | jq '.'
+
+          echo "=== FILTERING FOR 'E2E (Internal & Prod)' ==="
+          CHECK_DATA=$(echo "$ALL_CHECKS" | jq 'select(.name=="E2E (Internal & Prod)")')
+
+          if [ -z "$CHECK_DATA" ]; then
+            echo "No checks found with that exact name."
+            # Optionally, you could exit 0 here if you want to skip
+          else
+            echo "Found checks:"
+            echo "$CHECK_DATA" | jq '.'
+
+            CHECK_IDS=$(echo "$CHECK_DATA" | jq -r '.id')
+            for CHECK_ID in $CHECK_IDS; do
+              echo "Cancelling check $CHECK_ID..."
+              gh api -X PATCH /repos/${{ github.repository }}/check-runs/$CHECK_ID \
+                -f status="completed" \
+                -f conclusion="cancelled" \
+                --silent
+            done
           fi
-          
-          curl -X PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/check-runs/$CHECK_ID" \
-            -d '{"status":"completed","conclusion":"success"}'
+
+          echo "=== MARKING LAST CHECK AS SUCCESS ==="
+          if [ -n "$LAST_CHECK_ID" ] && [ "$LAST_CHECK_ID" != "null" ]; then
+            echo "Marking last check $LAST_CHECK_ID as success..."
+            gh api -X PATCH /repos/${{ github.repository }}/check-runs/$LAST_CHECK_ID \
+              -f status="completed" \
+              -f conclusion="success" \
+              --silent
+          else
+            echo "Warning: LAST_CHECK_ID is not set, skipping final success update."
+          fi
+
+          echo "All checks processed."
