@@ -8,7 +8,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
 
 - Node.js 20+
 - Jira API token
-
+ad
 ## Setup
 
 1. Install dependencies:
