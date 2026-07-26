@@ -9,8 +9,6 @@ on:
       - master
       - rc-sas
       - "release/**"
-  issue_comment:
-    types: [created]
 
 jobs:
   create_checks:
@@ -26,34 +24,42 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_API_URL: https://api.github.com
+          REPO_FULL: ${{ github.repository }}
         run: |
           set -e
           CHECK_NAME="E2E (Internal & Prod)"
           STATUS="in_progress"
+
           HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
-          REPO="${{ github.repository }}"
-          OWNER="${{ github.repository_owner }}"
+          MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
 
-          echo "Target Commit SHA: $HEAD_SHA"
+          # Safely choose target SHA: prefer merge_commit_sha if it's not null
+          if [ -n "$MERGE_SHA" ] && [ "$MERGE_SHA" != "null" ]; then
+            TARGET_SHA="$MERGE_SHA"
+            echo "Using merge commit SHA: $TARGET_SHA"
+          else
+            TARGET_SHA="$HEAD_SHA"
+            echo "WARNING: merge_commit_sha is not available, falling back to head SHA: $TARGET_SHA"
+          fi
 
-          if [ -z "$HEAD_SHA" ] || [ "$HEAD_SHA" = "null" ]; then
-            echo "ERROR: HEAD_SHA is empty or null"
+          if [ -z "$TARGET_SHA" ] || [ "$TARGET_SHA" = "null" ]; then
+            echo "ERROR: TARGET_SHA is empty or null"
             exit 1
           fi
 
           LAST_ID=""
           for i in {1..5}; do
-            echo "Creating check run #$i..."
+            echo "Creating check run #$i on $TARGET_SHA..."
             RESPONSE=$(curl -sS -X POST \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "Content-Type: application/json" \
               -d "{
                   \"name\": \"$CHECK_NAME\",
-                  \"head_sha\": \"$HEAD_SHA\",
+                  \"head_sha\": \"$TARGET_SHA\",
                   \"status\": \"$STATUS\"
                 }" \
-              "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs")
+              "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs")
 
             CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
             if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
@@ -84,17 +90,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_API_URL: https://api.github.com
+          REPO_FULL: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           CHECK_NAME="E2E (Internal & Prod)"
           HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
-          REPO="${{ github.repository }}"
-          OWNER="${{ github.repository_owner }}"
+          MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+
+          # Same safe logic for target SHA
+          if [ -n "$MERGE_SHA" ] && [ "$MERGE_SHA" != "null" ]; then
+            TARGET_SHA="$MERGE_SHA"
+          else
+            TARGET_SHA="$HEAD_SHA"
+            echo "WARNING: merge_commit_sha not available, using head SHA for final check."
+          fi
 
           echo "=== Step 1: Fetch all commits in PR ==="
           COMMITS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/commits" \
+            "${GITHUB_API_URL}/repos/${REPO_FULL}/pulls/${PR_NUMBER}/commits" \
             | jq -r '.[].sha')
           echo "Commits: $COMMITS"
 
@@ -102,7 +116,7 @@ jobs:
           for SHA in $COMMITS; do
             CHECK_RUNS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-              "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/commits/${SHA}/check-runs")
+              "${GITHUB_API_URL}/repos/${REPO_FULL}/commits/${SHA}/check-runs")
             STALE_IDS=$(echo "$CHECK_RUNS" | jq -r '.check_runs[] | select(.name=="'"$CHECK_NAME"'") | .id')
             if [ -n "$STALE_IDS" ]; then
               for CID in $STALE_IDS; do
@@ -112,24 +126,24 @@ jobs:
                   -H "Accept: application/vnd.github+json" \
                   -H "Content-Type: application/json" \
                   -d '{"status":"completed","conclusion":"cancelled"}' \
-                  "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs/${CID}" > /dev/null
+                  "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs/${CID}" > /dev/null
               done
             fi
           done
 
           sleep 2
 
-          echo "=== Step 3: Create a brand new check on HEAD commit ==="
+          echo "=== Step 3: Create a brand new check on TARGET commit ($TARGET_SHA) ==="
           NEW_RESPONSE=$(curl -sS -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "Content-Type: application/json" \
             -d "{
                 \"name\": \"$CHECK_NAME\",
-                \"head_sha\": \"$HEAD_SHA\",
+                \"head_sha\": \"$TARGET_SHA\",
                 \"status\": \"in_progress\"
               }" \
-            "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs")
+            "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs")
           NEW_CHECK_ID=$(echo "$NEW_RESPONSE" | jq -r '.id')
           echo "New check ID: $NEW_CHECK_ID"
 
@@ -141,6 +155,6 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Content-Type: application/json" \
             -d '{"status":"completed","conclusion":"success"}' \
-            "${GITHUB_API_URL}/repos/${OWNER}/${REPO}/check-runs/${NEW_CHECK_ID}" > /dev/null
+            "${GITHUB_API_URL}/repos/${REPO_FULL}/check-runs/${NEW_CHECK_ID}" > /dev/null
 
           echo "All done. PR status should now show SUCCESS."
