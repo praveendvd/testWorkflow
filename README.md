@@ -6,7 +6,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 20+`zx
 - Jira API token
 
 ## Setup
