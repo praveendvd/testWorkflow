@@ -1,6 +1,5 @@
 name: Pull Request Validation
 
-# RULESET: Require the checks "Validation" and "E2E (Internal & Prod)" in branch protection.
 on:
   workflow_dispatch:
   pull_request:
@@ -17,6 +16,9 @@ jobs:
   validation:
     uses: ./.github/workflows/mock-snyk-scan.yml
 
+  # ------------------------------------------------------------------
+  # comment-context: evaluate if E2E should run, and create the check
+  # ------------------------------------------------------------------
   comment-context:
     runs-on: ubuntu-latest
     outputs:
@@ -28,16 +30,97 @@ jobs:
       issues: read
     steps:
       - uses: actions/checkout@v4
-      - name: Evaluate context and create check
+
+      - name: Evaluate context and create check (curl)
         id: eval
-        uses: actions/github-script@v7
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
-        with:
-          script: |
-            const script = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/comment-context.cjs`);
-            await script({ core, context, github });
-          
+        run: |
+          # Use the helper script to determine should_run and get head_sha/pull_number
+          # We'll re-implement the logic in bash; you can keep the .cjs script if you like,
+          # but we'll do the curl creation directly here.
+          #
+          # For simplicity, we'll replicate the logic in bash.
+          # (Alternatively, you could keep the .cjs script to compute should_run and then
+          #  use curl separately, but we'll do it all in bash.)
+
+          # Determine event type
+          EVENT_NAME="${{ github.event_name }}"
+          SHOULD_RUN="false"
+          CHECK_RUN_ID=""
+
+          # Determine head_sha and pull_number
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            PULL_NUMBER="${{ github.event.pull_request.number }}"
+            # For PR events, run if ENABLE_E2E_COMMENT_VALIDATION is NOT true
+            if [ "$ENABLE_E2E_COMMENT_VALIDATION" != "true" ]; then
+              SHOULD_RUN="true"
+            fi
+          elif [ "$EVENT_NAME" = "issue_comment" ]; then
+            # Only run if comment is /runtests or /runchecks and author is allowed
+            COMMENT_BODY="${{ github.event.comment.body }}"
+            # Normalize and check command
+            NORMALIZED=$(echo "$COMMENT_BODY" | tr '[:upper:]' '[:lower:]' | xargs)
+            if [[ "$NORMALIZED" == "/runtests" || "$NORMALIZED" == "/runchecks" ]]; then
+              # Check author association
+              ASSOCIATION="${{ github.event.comment.author_association }}"
+              if [[ "$ASSOCIATION" == "OWNER" || "$ASSOCIATION" == "MEMBER" || "$ASSOCIATION" == "COLLABORATOR" ]]; then
+                if [ "$ENABLE_E2E_COMMENT_VALIDATION" = "true" ]; then
+                  SHOULD_RUN="true"
+                  # Get PR info from issue number
+                  ISSUE_NUMBER="${{ github.event.issue.number }}"
+                  PR_DATA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+                    "https://api.github.com/repos/${{ github.repository }}/pulls/$ISSUE_NUMBER")
+                  HEAD_SHA=$(echo "$PR_DATA" | jq -r '.head.sha')
+                  PULL_NUMBER="$ISSUE_NUMBER"
+                fi
+              fi
+            fi
+          else
+            # Fallback
+            HEAD_SHA="${{ github.sha }}"
+            PULL_NUMBER="unknown"
+          fi
+
+          # If HEAD_SHA is still empty, fallback to github.sha
+          if [ -z "$HEAD_SHA" ]; then
+            HEAD_SHA="${{ github.sha }}"
+          fi
+
+          echo "Target commit: $HEAD_SHA, PR: $PULL_NUMBER, should_run: $SHOULD_RUN"
+
+          # Create the check run ONLY if should_run is true
+          if [ "$SHOULD_RUN" = "true" ]; then
+            CHECK_NAME="E2E (Internal & Prod)"
+            CHECK_URL="https://github.com/${{ github.repository }}/pull/$PULL_NUMBER/checks"
+
+            RESPONSE=$(curl -s -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+              -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"in_progress\",\"details_url\":\"$CHECK_URL\",\"output\":{\"title\":\"E2E tests in progress\",\"summary\":\"The E2E tests have been triggered and are running.\"}}")
+
+            CHECK_RUN_ID=$(echo "$RESPONSE" | jq -r '.id')
+            if [ -z "$CHECK_RUN_ID" ] || [ "$CHECK_RUN_ID" = "null" ]; then
+              echo "Error: Failed to create check run. Response: $RESPONSE"
+              exit 1
+            fi
+            echo "Created check run ID: $CHECK_RUN_ID"
+          else
+            # No check created; set CHECK_RUN_ID to empty
+            CHECK_RUN_ID=""
+          fi
+
+          # Set outputs
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+          echo "check_run_id=$CHECK_RUN_ID" >> "$GITHUB_OUTPUT"
+
+  # ------------------------------------------------------------------
+  # E2E test jobs
+  # ------------------------------------------------------------------
   e2e-internal:
     if: always() && needs.comment-context.outputs.should_run == 'true'
     name: E2E Tests (Internal)
@@ -45,7 +128,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Mock internal E2E run completed
-        run: sleep 1m && echo "Mock internal E2E run completed" 
+        run: sleep 1m && echo "Mock internal E2E run completed"
 
   e2e-prod:
     if: always() && needs.comment-context.outputs.should_run == 'true'
@@ -56,6 +139,9 @@ jobs:
       - name: Mock Prod E2E run completed
         run: echo "Mock Prod E2E run completed"
 
+  # ------------------------------------------------------------------
+  # e2e-gate: update the check with final conclusion
+  # ------------------------------------------------------------------
   e2e-gate:
     permissions:
       checks: write
@@ -65,19 +151,66 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v4
-      - name: Update E2E Gate Check
-        uses: actions/github-script@v7
+
+      - name: Update E2E Gate Check (curl)
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           E2E_INTERNAL_RESULT: ${{ needs.e2e-internal.result }}
           E2E_PROD_RESULT: ${{ needs.e2e-prod.result }}
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
           CHECK_RUN_ID: ${{ needs.comment-context.outputs.check_run_id }}
-        with:
-          script: |
-            const script = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/e2e-gate.cjs`);
-            await script({ core, context, github });
-            
+        run: |
+          if [ -z "$CHECK_RUN_ID" ] || [ "$CHECK_RUN_ID" = "null" ]; then
+            echo "No check run to update (either should_run was false or creation failed). Exiting."
+            exit 0
+          fi
 
+          # Determine conclusion based on rules
+          INTERNAL="$E2E_INTERNAL_RESULT"
+          PROD="$E2E_PROD_RESULT"
+          ENABLE="$ENABLE_E2E_COMMENT_VALIDATION"
 
-    
+          if [ "$INTERNAL" = "success" ] && [ "$PROD" = "success" ]; then
+            CONCLUSION="success"
+            TITLE="E2E Internal and Prod passed"
+            SUMMARY="Both E2E stages passed successfully."
+          elif [ "$INTERNAL" = "skipped" ] && [ "$PROD" = "skipped" ]; then
+            if [ "$ENABLE" = "true" ]; then
+              CONCLUSION="failure"
+              TITLE="E2E skipped"
+              SUMMARY="E2E skipped. Comment /runtests on this PR to run E2E on the latest head commit."
+            else
+              CONCLUSION="failure"
+              TITLE="E2E required but skipped"
+              SUMMARY="ENABLE_E2E_COMMENT_VALIDATION is false, but both E2E stages were skipped. They must succeed."
+            fi
+          else
+            CONCLUSION="failure"
+            TITLE="E2E gate failed"
+            SUMMARY="E2E gate failed: internal=${INTERNAL}, prod=${PROD}"
+          fi
 
+          # Prepare the PATCH payload
+          PAYLOAD=$(jq -n \
+            --arg status "completed" \
+            --arg conclusion "$CONCLUSION" \
+            --arg title "$TITLE" \
+            --arg summary "$SUMMARY" \
+            '{
+              status: $status,
+              conclusion: $conclusion,
+              output: {
+                title: $title,
+                summary: $summary
+              }
+            }')
+
+          # Update the check run
+          curl -s -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/check-runs/$CHECK_RUN_ID" \
+            -d "$PAYLOAD"
+
+          echo "Check run $CHECK_RUN_ID updated with conclusion: $CONCLUSION"
