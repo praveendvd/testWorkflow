@@ -1,4 +1,4 @@
-# Jira MCP Example (stdio)...
+# Jira MCP Example (stdio)...d
 
 ## What this is
 
