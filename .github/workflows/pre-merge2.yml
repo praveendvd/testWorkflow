@@ -1,5 +1,17 @@
 name: Manage GitHub Checks
 
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - main
+      - master
+      - rc-sas
+      - "release/**"
+  issue_comment:
+    types: [created]
+
 jobs:
   create_checks:
     runs-on: ubuntu-latest
