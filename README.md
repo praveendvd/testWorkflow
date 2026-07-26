@@ -10,7 +10,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
 - Jira API token
 
 ## Setup
-
+asd
 1. Install dependencies:
    ```bash
    npm install
