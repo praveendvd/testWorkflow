@@ -1,5 +1,17 @@
 name: Manage GitHub Checks
 
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - main
+      - master
+      - rc-sas
+      - "release/**"
+  issue_comment:
+    types: [created]
+
 jobs:
   create_checks:
     runs-on: ubuntu-latest
@@ -47,25 +59,35 @@ jobs:
           
           echo "last_id=$LAST_ID" >> "$GITHUB_OUTPUT"
 
-  use_check_id:
+  update_all:
     runs-on: ubuntu-latest
-    needs: create_checks
+    needs: create_checks   # still need to get HEAD_SHA or use github.sha
     permissions:
       checks: write
     steps:
-      - name: Update Last Check to Success
+      - name: Update all existing checks to success
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHECK_ID: ${{ needs.create_checks.outputs.last_check_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
-            echo "Error: Invalid Check ID"
-            exit 1
+          # Fetch all check runs for this commit
+          RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs")
+
+          # Extract IDs of checks with the specific name and status 'in_progress' or 'queued'
+          CHECK_IDS=$(echo "$RESPONSE" | jq -r '.check_runs[] | select(.name=="E2E (Internal & Prod)" and (.status=="in_progress" or .status=="queued")) | .id')
+
+          if [ -z "$CHECK_IDS" ]; then
+            echo "No in-progress/queued checks found to update."
+            exit 0
           fi
-          
-          curl -X PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/check-runs/$CHECK_ID" \
-            -d '{"status":"completed","conclusion":"success"}'
+
+          for CHECK_ID in $CHECK_IDS; do
+            echo "Updating check $CHECK_ID to completed/success..."
+            curl -s -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/check-runs/$CHECK_ID" \
+              -d '{"status":"completed","conclusion":"success"}'
+          done
