@@ -11,7 +11,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
 
 ## Setup
 ad
-1. Install dependencies:
+1. Install dependencies:ad
    ```bash
    npm install
    ```
