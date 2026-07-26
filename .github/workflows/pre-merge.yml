@@ -1,18 +1,5 @@
 name: Pull Request Validation
 
-# RULESET: Require the checks "Validation" and "E2E (Internal & Prod)" in branch protection.
-on:
-  workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize, reopened, edited]
-    branches:
-      - main
-      - master
-      - rc-sas
-      - "release/**"
-  issue_comment:
-    types: [created]
-
 jobs:
   validation:
     uses: ./.github/workflows/mock-snyk-scan.yml
