@@ -3,7 +3,7 @@
 ## What this is
 
 This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars against Jira REST API v2: tools, resources, and prompts.
-
+asd
 ## Prerequisites
 
 - Node.js 20+
