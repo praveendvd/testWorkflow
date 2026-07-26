@@ -1,6 +1,5 @@
 name: Pull Request Validation
 
-# RULESET: Require the checks "Validation" and "E2E (Internal & Prod)" in branch protection.
 on:
   workflow_dispatch:
   pull_request:
@@ -17,6 +16,9 @@ jobs:
   validation:
     uses: ./.github/workflows/mock-snyk-scan.yml
 
+  # ------------------------------------------------------------------
+  # comment-context: evaluate if E2E should run, and create the check
+  # ------------------------------------------------------------------
   comment-context:
     runs-on: ubuntu-latest
     outputs:
@@ -28,16 +30,19 @@ jobs:
       issues: read
     steps:
       - uses: actions/checkout@v4
+
       - name: Evaluate context and create check
         id: eval
-        uses: actions/github-script@v7
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
-        with:
-          script: |
-            const script = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/comment-context.cjs`);
-            await script({ core, context, github });
-          
+        run: |
+          chmod +x .github/scripts/comment-context.sh
+          .github/scripts/comment-context.sh
+
+  # ------------------------------------------------------------------
+  # E2E test jobs
+  # ------------------------------------------------------------------
   e2e-internal:
     if: always() && needs.comment-context.outputs.should_run == 'true'
     name: E2E Tests (Internal)
@@ -45,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Mock internal E2E run completed
-        run: sleep 1m && echo "Mock internal E2E run completed" 
+        run: sleep 1m && echo "Mock internal E2E run completed"
 
   e2e-prod:
     if: always() && needs.comment-context.outputs.should_run == 'true'
@@ -56,6 +61,9 @@ jobs:
       - name: Mock Prod E2E run completed
         run: echo "Mock Prod E2E run completed"
 
+  # ------------------------------------------------------------------
+  # e2e-gate: update the check with final conclusion
+  # ------------------------------------------------------------------
   e2e-gate:
     permissions:
       checks: write
@@ -65,19 +73,14 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v4
+
       - name: Update E2E Gate Check
-        uses: actions/github-script@v7
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           E2E_INTERNAL_RESULT: ${{ needs.e2e-internal.result }}
           E2E_PROD_RESULT: ${{ needs.e2e-prod.result }}
           ENABLE_E2E_COMMENT_VALIDATION: ${{ vars.ENABLE_E2E_COMMENT_VALIDATION }}
           CHECK_RUN_ID: ${{ needs.comment-context.outputs.check_run_id }}
-        with:
-          script: |
-            const script = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/e2e-gate.cjs`);
-            await script({ core, context, github });
-            
-
-
-    
-
+        run: |
+          chmod +x .github/scripts/e2e-gate.sh
+          .github/scripts/e2e-gate.sh
