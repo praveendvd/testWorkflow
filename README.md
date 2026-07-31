@@ -12,7 +12,7 @@ This is a Part 4 tutorial MCP server that demonstrates all three MCP pillars aga
 ## Setup
 
 1. Install dependencies:
-   ```bash
+   ```bashasd
    npm install
    ```
 2. Copy env template and set real Jira credentials:
