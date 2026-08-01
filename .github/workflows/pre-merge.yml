@@ -15,12 +15,20 @@ on:
 jobs:
   create_checks:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'issue_comment' ||
+      (vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+       github.event.issue.pull_request &&
+       contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks')))
     permissions:
       checks: write
       contents: read
       pull-requests: read
     outputs:
       check_run_ids: ${{ steps.create.outputs.check_run_ids }}
+      head_sha: ${{ steps.resolve_sha.outputs.head_sha }}
+      merge_sha: ${{ steps.resolve_sha.outputs.merge_sha }}
 
     steps:
       - name: Resolve head and merge SHAs
@@ -97,10 +105,19 @@ jobs:
           echo "check_run_ids=$IDS" >> "$GITHUB_OUTPUT"
 
   validation:
+    needs: create_checks
     uses: ./.github/workflows/mock-snyk-scan.yml
+    with:
+      head_sha: ${{ needs.create_checks.outputs.head_sha }}
 
   comment-context:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'issue_comment' ||
+      (vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+       github.event.issue.pull_request &&
+       contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks')))
     outputs:
       should_run: ${{ steps.comment-check.outputs.should_run }}
     steps:
@@ -135,8 +152,7 @@ jobs:
   # ------------------------------------------------------------------
   e2e-internal:
     name: E2E Tests (Internal)
-    needs: [validation, comment-context]
-    # FIX: Safely verifies comment-context ran successfully before evaluating its outputs
+    needs: [create_checks, validation, comment-context]
     if: |
       always() &&
       needs.comment-context.result == 'success' && 
@@ -144,13 +160,19 @@ jobs:
       needs.comment-context.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout PR head commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create_checks.outputs.head_sha }}
       - name: Mock internal E2E run completed
-        run: sleep 1m && echo "Mock internal E2E run completed"
+        run: |
+          sleep 1m
+          echo "Running on commit $(git rev-parse HEAD)"
+          echo "Mock internal E2E run completed"
 
   e2e-prod:
     name: E2E Tests (Prod)
-    needs: [validation, comment-context]
-    # FIX: Safely verifies comment-context ran successfully before evaluating its outputs
+    needs: [create_checks, validation, comment-context]
     if: |
       always() &&
       needs.comment-context.result == 'success' && 
@@ -158,14 +180,26 @@ jobs:
       needs.comment-context.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout PR head commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create_checks.outputs.head_sha }}
       - name: Mock Prod E2E run completed
-        run: echo "Mock Prod E2E run completed"
+        run: |
+          echo "Running on commit $(git rev-parse HEAD)"
+          echo "Mock Prod E2E run completed"
 
   e2e-gate:
     name: E2E Gate
     runs-on: ubuntu-latest
     needs: [comment-context, e2e-internal, e2e-prod]
-    if: always()
+    if: |
+      always() &&
+      (github.event_name != 'issue_comment' ||
+       (vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+        github.event.issue.pull_request &&
+        contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+        (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks'))))
     outputs:
       gate_status: ${{ steps.evaluate.outputs.gate_status }}
       gate_message: ${{ steps.evaluate.outputs.gate_message }}
@@ -275,9 +309,6 @@ jobs:
           elif [ "$E2E_GATE_STATUS" = "failed" ] || [ "$E2E_GATE_STATUS" = "intentionallySkipped" ]; then
             CONCLUSION="failure"
             SHOULD_FAIL_JOB="true"
-          elif [ "$E2E_GATE_STATUS" = "skipped" ]; then
-            CONCLUSION="neutral"
-            SHOULD_FAIL_JOB="false"
           else
             CONCLUSION="failure"
             SHOULD_FAIL_JOB="true"
@@ -304,4 +335,104 @@ jobs:
           done
 
           echo "$E2E_GATE_MESSAGE"
-  
+
+  post_initiation_message:
+    runs-on: ubuntu-latest
+    needs: [create_checks]
+    if: |
+      always() &&
+      github.event_name == 'issue_comment' &&
+      vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+      github.event.issue.pull_request &&
+      contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+      (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks')) &&
+      needs.create_checks.result == 'success'
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post initiation message
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ needs.create_checks.outputs.head_sha }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHECKS_URL: ${{ github.server_url }}/${{ github.repository }}/pull/${{ github.event.issue.number }}/checks
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+
+          API="https://api.github.com/repos/${{ github.repository }}"
+          BRANCH=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$API/pulls/$PR_NUMBER" | jq -r '.head.ref')
+          SHORT_SHA=$(echo "$HEAD_SHA" | cut -c1-7)
+          DISPATCH_REF=$(echo "$WORKFLOW_REF" | sed -E 's#^.*/\.github/workflows/pre-merge\.yml@##; s#refs/heads/##')
+
+          BODY=$(printf '%s\n\n- Branch: `%s`\n- Commit: `%s`\n- Dispatched: pre-merge.yml@%s\n- Workflow run: [%s](%s)\n- PR checks: [View checks](%s)\n- Track progress in **GitHub Actions** (workflow run links above). Required checks update when jobs finish.\nRe-run after new pushes with `/runchecks` (or `/runtests`).' \
+            'PR checks were requested via slash command (`/runchecks` / `/runtests`).' \
+            "$BRANCH" "$SHORT_SHA" "$DISPATCH_REF" "$WORKFLOW_NAME" "$RUN_URL" "$CHECKS_URL")
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            "$API/issues/$PR_NUMBER/comments" \
+            -d "$(jq -nc --arg body "$BODY" '{body:$body}')" > /dev/null
+
+  post_completion_message:
+    runs-on: ubuntu-latest
+    needs: [create_checks, e2e-gate, complete_checks]
+    if: |
+      always() &&
+      github.event_name == 'issue_comment' &&
+      vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+      github.event.issue.pull_request &&
+      contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+      (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks'))
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post completion message
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ needs.create_checks.outputs.head_sha }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHECKS_URL: ${{ github.server_url }}/${{ github.repository }}/pull/${{ github.event.issue.number }}/checks
+          GATE_STATUS: ${{ needs.e2e-gate.outputs.gate_status }}
+          GATE_MESSAGE: ${{ needs.e2e-gate.outputs.gate_message }}
+        run: |
+          set -euo pipefail
+
+          API="https://api.github.com/repos/${{ github.repository }}"
+          BRANCH=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$API/pulls/$PR_NUMBER" | jq -r '.head.ref')
+          SHORT_SHA=$(echo "$HEAD_SHA" | cut -c1-7)
+
+          if [ "$GATE_STATUS" = "success" ]; then
+            STATUS="success"
+            STATUS_ICON="✅"
+            STATUS_TEXT="green tick"
+          else
+            STATUS="failed"
+            STATUS_ICON="❌"
+            STATUS_TEXT="red cross"
+          fi
+
+          MESSAGE="${GATE_MESSAGE:-One or more workflow_dispatch calls failed (missing workflow file, permissions, or API error).}"
+
+          BODY=$(printf '%s\n\n- Branch: `%s`\n- Commit: `%s`\n- Status : %s\n- Status Message:  %s %s\n- Workflow run: [%s](%s)\n- PR checks: [View checks](%s)\n\nFix the failure (permissions, workflow files, or PR state) and re-comment `/runchecks` (or `/runtests`).' \
+            "Slash-command dispatch **$STATUS**." \
+            "$BRANCH" "$SHORT_SHA" "$STATUS_TEXT" "$STATUS_ICON" "$MESSAGE" "$WORKFLOW_NAME" "$RUN_URL" "$CHECKS_URL")
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            "$API/issues/$PR_NUMBER/comments" \
+            -d "$(jq -nc --arg body "$BODY" '{body:$body}')" > /dev/null
