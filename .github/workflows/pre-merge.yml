@@ -74,35 +74,35 @@ jobs:
 
       - name: Create E2E checks (in progress)
         id: create
+        uses: actions/github-script@v7
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ steps.resolve_sha.outputs.head_sha }}
           MERGE_SHA: ${{ steps.resolve_sha.outputs.merge_sha }}
           CHECK_DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          CHECK_NAME="E2E (Internal & Prod)"
-          API="https://api.github.com/repos/${{ github.repository }}"
-          IDS=""
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const checkName = 'E2E (Internal & Prod)';
+            const headSha = process.env.HEAD_SHA || '';
+            const mergeSha = process.env.MERGE_SHA || '';
+            const detailsUrl = process.env.CHECK_DETAILS_URL;
+            const shas = [headSha, mergeSha].filter(Boolean);
+            const ids = [];
 
-          for SHA in "$HEAD_SHA" $MERGE_SHA; do
-            [ -z "$SHA" ] && continue
-            RESPONSE=$(curl -sS -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/json" \
-              "$API/check-runs" \
-              -d "{\"name\":\"$CHECK_NAME\",\"head_sha\":\"$SHA\",\"status\":\"in_progress\",\"details_url\":\"$CHECK_DETAILS_URL\"}")
-            CHECK_ID=$(echo "$RESPONSE" | jq -r '.id')
-            if [ -z "$CHECK_ID" ] || [ "$CHECK_ID" = "null" ]; then
-              echo "Create failed on $SHA: $RESPONSE"
-              exit 1
-            fi
-            echo "Created check $CHECK_ID on $SHA"
-            IDS="${IDS}${IDS:+,}$CHECK_ID"
-          done
+            for (const sha of shas) {
+              const { data } = await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: checkName,
+                head_sha: sha,
+                status: 'in_progress',
+                details_url: detailsUrl,
+              });
+              core.info(`Created check ${data.id} on ${sha}`);
+              ids.push(String(data.id));
+            }
 
-          echo "check_run_ids=$IDS" >> "$GITHUB_OUTPUT"
+            core.setOutput('check_run_ids', ids.join(','));
 
   validation:
     needs: create_checks
@@ -294,47 +294,51 @@ jobs:
       checks: write
     steps:
       - name: Mark E2E checks success
+        uses: actions/github-script@v7
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHECK_RUN_IDS: ${{ needs.create_checks.outputs.check_run_ids }}
           E2E_GATE_STATUS: ${{ needs.e2e-gate.outputs.gate_status }}
           E2E_GATE_MESSAGE: ${{ needs.e2e-gate.outputs.gate_message }}
           CHECK_DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          API="https://api.github.com/repos/${{ github.repository }}"
-          if [ "$E2E_GATE_STATUS" = "success" ]; then
-            CONCLUSION="success"
-            SHOULD_FAIL_JOB="false"
-          elif [ "$E2E_GATE_STATUS" = "failed" ] || [ "$E2E_GATE_STATUS" = "intentionallySkipped" ]; then
-            CONCLUSION="failure"
-            SHOULD_FAIL_JOB="true"
-          else
-            CONCLUSION="failure"
-            SHOULD_FAIL_JOB="true"
-            E2E_GATE_MESSAGE="Unknown gate status '$E2E_GATE_STATUS'"
-          fi
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const gateStatus = process.env.E2E_GATE_STATUS || '';
+            let gateMessage = process.env.E2E_GATE_MESSAGE || '';
+            const checkRunIds = (process.env.CHECK_RUN_IDS || '')
+              .split(',')
+              .map((id) => id.trim())
+              .filter(Boolean);
+            const detailsUrl = process.env.CHECK_DETAILS_URL;
 
-          IFS=',' read -ra IDS <<< "$CHECK_RUN_IDS"
-          for CHECK_ID in "${IDS[@]}"; do
-            [ -z "$CHECK_ID" ] && continue
-            SUMMARY_WITH_LINK=$(printf '%s\n\n[Open workflow run](%s)' "$E2E_GATE_MESSAGE" "$CHECK_DETAILS_URL")
-            PAYLOAD=$(jq -nc \
-              --arg details_url "$CHECK_DETAILS_URL" \
-              --arg conclusion "$CONCLUSION" \
-              --arg title "E2E (Internal & Prod): $E2E_GATE_STATUS" \
-              --arg summary "$SUMMARY_WITH_LINK" \
-              '{status:"completed",conclusion:$conclusion,details_url:$details_url,output:{title:$title,summary:$summary}}')
-            curl -sS -X PATCH \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/json" \
-              "$API/check-runs/$CHECK_ID" \
-              -d "$PAYLOAD"
-            echo "Completed check $CHECK_ID with conclusion=$CONCLUSION status=$E2E_GATE_STATUS"
-          done
+            let conclusion;
+            if (gateStatus === 'success') {
+              conclusion = 'success';
+            } else if (gateStatus === 'failed' || gateStatus === 'intentionallySkipped') {
+              conclusion = 'failure';
+            } else {
+              conclusion = 'failure';
+              gateMessage = `Unknown gate status '${gateStatus}'`;
+            }
 
-          echo "$E2E_GATE_MESSAGE"
+            const summaryWithLink = `${gateMessage}\n\n[Open workflow run](${detailsUrl})`;
+            for (const checkId of checkRunIds) {
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: Number(checkId),
+                status: 'completed',
+                conclusion,
+                details_url: detailsUrl,
+                output: {
+                  title: `E2E (Internal & Prod): ${gateStatus}`,
+                  summary: summaryWithLink,
+                },
+              });
+              core.info(`Completed check ${checkId} with conclusion=${conclusion} status=${gateStatus}`);
+            }
+
+            core.info(gateMessage);
 
   post_initiation_message:
     runs-on: ubuntu-latest
