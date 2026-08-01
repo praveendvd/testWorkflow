@@ -21,6 +21,8 @@ jobs:
       pull-requests: read
     outputs:
       check_run_ids: ${{ steps.create.outputs.check_run_ids }}
+      head_sha: ${{ steps.resolve_sha.outputs.head_sha }}
+      merge_sha: ${{ steps.resolve_sha.outputs.merge_sha }}
 
     steps:
       - name: Resolve head and merge SHAs
@@ -97,7 +99,10 @@ jobs:
           echo "check_run_ids=$IDS" >> "$GITHUB_OUTPUT"
 
   validation:
+    needs: create_checks
     uses: ./.github/workflows/mock-snyk-scan.yml
+    with:
+      head_sha: ${{ needs.create_checks.outputs.head_sha }}
 
   comment-context:
     runs-on: ubuntu-latest
@@ -135,7 +140,7 @@ jobs:
   # ------------------------------------------------------------------
   e2e-internal:
     name: E2E Tests (Internal)
-    needs: [validation, comment-context]
+    needs: [create_checks, validation, comment-context]
     # FIX: Safely verifies comment-context ran successfully before evaluating its outputs
     if: |
       always() &&
@@ -144,12 +149,19 @@ jobs:
       needs.comment-context.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout PR head commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create_checks.outputs.head_sha }}
       - name: Mock internal E2E run completed
-        run: sleep 1m && echo "Mock internal E2E run completed"
+        run: |
+          sleep 1m
+          echo "Running on commit $(git rev-parse HEAD)"
+          echo "Mock internal E2E run completed"
 
   e2e-prod:
     name: E2E Tests (Prod)
-    needs: [validation, comment-context]
+    needs: [create_checks, validation, comment-context]
     # FIX: Safely verifies comment-context ran successfully before evaluating its outputs
     if: |
       always() &&
@@ -158,8 +170,14 @@ jobs:
       needs.comment-context.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout PR head commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create_checks.outputs.head_sha }}
       - name: Mock Prod E2E run completed
-        run: echo "Mock Prod E2E run completed"
+        run: |
+          echo "Running on commit $(git rev-parse HEAD)"
+          echo "Mock Prod E2E run completed"
 
   e2e-gate:
     name: E2E Gate

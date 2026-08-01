@@ -2,7 +2,17 @@ name: mock-snyk-scan
 
 on:
   workflow_dispatch:
+    inputs:
+      head_sha:
+        description: "Commit SHA to run validation against"
+        required: false
+        type: string
   workflow_call:
+    inputs:
+      head_sha:
+        description: "Commit SHA to run validation against"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -15,6 +25,16 @@ jobs:
     name: snyk-scan
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout requested commit
+        uses: actions/checkout@v4
+        if: inputs.head_sha != ''
+        with:
+          ref: ${{ inputs.head_sha }}
+      - name: Checkout default ref
+        uses: actions/checkout@v4
+        if: inputs.head_sha == ''
+      - name: Show checked out commit
+        run: echo "Validation running on commit $(git rev-parse HEAD)"
       - name: Mock Snyk scan start
         run: echo "scan ran"
       - name: Mock Snyk scan progress
