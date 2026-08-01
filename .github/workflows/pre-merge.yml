@@ -15,12 +15,20 @@ on:
 jobs:
   create_checks:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'issue_comment' ||
+      (vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+       github.event.issue.pull_request &&
+       contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks')))
     permissions:
       checks: write
       contents: read
       pull-requests: read
     outputs:
       check_run_ids: ${{ steps.create.outputs.check_run_ids }}
+      head_sha: ${{ steps.resolve_sha.outputs.head_sha }}
+      merge_sha: ${{ steps.resolve_sha.outputs.merge_sha }}
 
     steps:
       - name: Resolve head and merge SHAs
@@ -97,10 +105,19 @@ jobs:
           echo "check_run_ids=$IDS" >> "$GITHUB_OUTPUT"
 
   validation:
+    needs: create_checks
     uses: ./.github/workflows/mock-snyk-scan.yml
+    with:
+      head_sha: ${{ needs.create_checks.outputs.head_sha }}
 
   comment-context:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'issue_comment' ||
+      (vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+       github.event.issue.pull_request &&
+       contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks')))
     outputs:
       should_run: ${{ steps.comment-check.outputs.should_run }}
     steps:
@@ -135,8 +152,7 @@ jobs:
   # ------------------------------------------------------------------
   e2e-internal:
     name: E2E Tests (Internal)
-    needs: [validation, comment-context]
-    # FIX: Safely verifies comment-context ran successfully before evaluating its outputs
+    needs: [create_checks, validation, comment-context]
     if: |
       always() &&
       needs.comment-context.result == 'success' && 
@@ -144,13 +160,19 @@ jobs:
       needs.comment-context.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout PR head commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create_checks.outputs.head_sha }}
       - name: Mock internal E2E run completed
-        run: sleep 1m && echo "Mock internal E2E run completed"
+        run: |
+          sleep 1m
+          echo "Running on commit $(git rev-parse HEAD)"
+          echo "Mock internal E2E run completed"
 
   e2e-prod:
     name: E2E Tests (Prod)
-    needs: [validation, comment-context]
-    # FIX: Safely verifies comment-context ran successfully before evaluating its outputs
+    needs: [create_checks, validation, comment-context]
     if: |
       always() &&
       needs.comment-context.result == 'success' && 
@@ -158,14 +180,25 @@ jobs:
       needs.comment-context.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout PR head commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create_checks.outputs.head_sha }}
       - name: Mock Prod E2E run completed
-        run: echo "Mock Prod E2E run completed"
+        run: |
+          echo "Running on commit $(git rev-parse HEAD)"
+          echo "Mock Prod E2E run completed"
 
   e2e-gate:
     name: E2E Gate
     runs-on: ubuntu-latest
     needs: [comment-context, e2e-internal, e2e-prod]
-    if: always()
+    if: |
+      github.event_name != 'issue_comment' ||
+      (vars.ENABLE_E2E_COMMENT_VALIDATION == 'true' &&
+       github.event.issue.pull_request &&
+       contains(fromJSON('["COLLABORATOR","MEMBER","OWNER"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/runtests') || contains(github.event.comment.body, '/runchecks')))
     outputs:
       gate_status: ${{ steps.evaluate.outputs.gate_status }}
       gate_message: ${{ steps.evaluate.outputs.gate_message }}
@@ -275,9 +308,6 @@ jobs:
           elif [ "$E2E_GATE_STATUS" = "failed" ] || [ "$E2E_GATE_STATUS" = "intentionallySkipped" ]; then
             CONCLUSION="failure"
             SHOULD_FAIL_JOB="true"
-          elif [ "$E2E_GATE_STATUS" = "skipped" ]; then
-            CONCLUSION="neutral"
-            SHOULD_FAIL_JOB="false"
           else
             CONCLUSION="failure"
             SHOULD_FAIL_JOB="true"
@@ -304,4 +334,3 @@ jobs:
           done
 
           echo "$E2E_GATE_MESSAGE"
-  
